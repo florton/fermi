@@ -14,6 +14,16 @@
     <header class="topbar" id="top-bar">
       <b class="brand">Fermi</b>
       <select id="scenario" title="Scenario"></select>
+      <select id="size" title="How much of the universe to simulate">
+        <option value="6,30000">Small · 6 Gly (seconds)</option>
+        <option value="12,120000" selected>Large · 12 Gly (~30 s)</option>
+        <option value="24,120000">Huge · 24 Gly, coarser (~30–60 s)</option>
+      </select>
+      <select id="span" title="How long to run">
+        <option value="40" selected>40 Gyr</option>
+        <option value="100">100 Gyr</option>
+        <option value="200">200 Gyr (slow)</option>
+      </select>
       <button id="run" class="primary" title="Simulate, then play / pause (Space)">Run</button>
       <button id="new-seed" hidden title="Simulate a fresh universe with the next seed">New seed</button>
       <button id="open-params" title="All parameters">Parameters</button>

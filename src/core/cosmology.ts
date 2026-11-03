@@ -42,6 +42,11 @@ export interface Cosmology {
   arrival(t0: number, d: number, v: number): number;
   /** When light that arrives at `t1` from comoving distance d was emitted. -1 if before t = 0. */
   emission(t1: number, d: number): number;
+  /**
+   * The same, plus the scale factor then, in one lookup. Returns a shared object
+   * that the next call overwrites — read it before calling again.
+   */
+  emissionWithScale(t1: number, d: number): { t: number; a: number };
   /** Cosmic star formation rate density, Msun / Gyr / comoving Mpc³. */
   sfr(t: number): number;
   /** Stellar mass formed per comoving Mpc³ from t = 0 to t. */
@@ -93,6 +98,26 @@ export function makeCosmology(p: CosmologyParams = PLANCK18, tMax = 200): Cosmol
     return Dt[i] + f * (Dt[i + 1] - Dt[i]);
   };
 
+  // The scale factor on the same grid, so looking up "how stretched was the
+  // universe when this light left" costs a table read instead of sinh and pow.
+  const At = new Float64Array(N + 1);
+  for (let i = 0; i <= N; i++) At[i] = a(Math.pow(i * ds, 3));
+
+  /** Grid cell and fraction where D reaches d. Assumes 0 < d < Dt[N]. */
+  let locLo = 0;
+  let locF = 0;
+  const locate = (d: number) => {
+    let lo = 0;
+    let hi = N;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (Dt[mid] < d) lo = mid;
+      else hi = mid;
+    }
+    locLo = lo;
+    locF = (d - Dt[lo]) / (Dt[hi] - Dt[lo]);
+  };
+
   const tOfD = (d: number) => {
     if (d <= 0) return 0;
     if (d >= Dinf) return Infinity;
@@ -101,16 +126,27 @@ export function makeCosmology(p: CosmologyParams = PLANCK18, tMax = 200): Cosmol
       const aT = 1 / ((Dinf - d) * H * sL);
       return Math.asinh(Math.pow(aT / k, 1.5)) / w;
     }
-    let lo = 0;
-    let hi = N;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (Dt[mid] < d) lo = mid;
-      else hi = mid;
-    }
-    const f = (d - Dt[lo]) / (Dt[hi] - Dt[lo]);
-    const s = (lo + f) * ds;
+    locate(d);
+    const s = (locLo + locF) * ds;
     return s * s * s;
+  };
+
+  const emitted = { t: 0, a: 0 };
+  const emissionWithScale = (t1: number, d: number) => {
+    const x = D(t1) - d;
+    if (x < 0) {
+      emitted.t = -1;
+      emitted.a = 0;
+    } else if (x <= 0 || x >= Dt[N]) {
+      emitted.t = tOfD(x);
+      emitted.a = a(emitted.t);
+    } else {
+      locate(x);
+      const s = (locLo + locF) * ds;
+      emitted.t = s * s * s;
+      emitted.a = At[locLo] + locF * (At[locLo + 1] - At[locLo]);
+    }
+    return emitted;
   };
 
   // Madau & Dickinson (2014), eq. 15, Msun/yr/Mpc³ → Msun/Gyr/Mpc³.
@@ -144,6 +180,7 @@ export function makeCosmology(p: CosmologyParams = PLANCK18, tMax = 200): Cosmol
       const x = D(t1) - d;
       return x < 0 ? -1 : tOfD(x);
     },
+    emissionWithScale,
     sfr,
     starsFormed,
   };

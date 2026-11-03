@@ -88,15 +88,29 @@ for (const [key, label, step] of FIELDS) {
   paramsEl.append(l, input);
 }
 const field = (key: string) => $<HTMLInputElement>(`f-${key}`);
+const sizeSel = $<HTMLSelectElement>('size');
+const spanSel = $<HTMLSelectElement>('span');
+/** Universe size and run length live in the top bar; they write into the same fields the dialog shows. */
+function applySizeAndSpan() {
+  const [box, nodes] = sizeSel.value.split(',');
+  field('boxGly').value = box;
+  field('nodes').value = nodes;
+  field('tEnd').value = spanSel.value;
+}
 function fillFromScenario() {
   const s = SCENARIOS[scenarioSel.value];
   const merged = { ...DEFAULTS, ...s } as unknown as Record<string, number>;
   const hard = s.hardSteps?.find((h) => h.log10Rate < 0)?.log10Rate ?? HARD_DEFAULT;
   for (const [key] of FIELDS) field(key).value = String(key === 'hardStepLog10' ? hard : merged[key]);
+  applySizeAndSpan();
 }
 fillFromScenario();
 scenarioSel.onchange = () => {
   fillFromScenario();
+  markStale();
+};
+sizeSel.onchange = spanSel.onchange = () => {
+  applySizeAndSpan();
   markStale();
 };
 paramsEl.oninput = () => markStale();
@@ -183,7 +197,7 @@ worker.onmessage = (e: MessageEvent<{ result: SimResult; summary: Summary }>) =>
   map.setResult(result);
   timeline.setResult(result);
   resizeTraits();
-  setTime(0);
+  setTime(timeline.t0);
   updateMainButton();
 };
 
@@ -216,7 +230,7 @@ function setPlaying(on: boolean) {
 
 function togglePlay() {
   if (!result || simulating) return;
-  if (t >= result.params.tEnd) setTime(0);
+  if (t >= result.params.tEnd) setTime(timeline.t0);
   setPlaying(!playing);
 }
 
@@ -287,7 +301,7 @@ function select(civ: number) {
   refreshPanels(true);
 }
 // Dev-only handle for poking at a run from the console.
-if (import.meta.env.DEV) Object.assign(window, { fermi: { select, setTime, get result() { return result; } } });
+if (import.meta.env.DEV) Object.assign(window, { fermi: { select, setTime, map, get result() { return result; } } });
 
 lineagesEl.onclick = (e) => {
   const li = (e.target as HTMLElement).closest('li');
@@ -351,7 +365,7 @@ window.addEventListener('keydown', (e) => {
 // ── Time ───────────────────────────────────────────────────────────────────
 function setTime(next: number) {
   if (!result) return;
-  t = Math.max(0, Math.min(result.params.tEnd, next));
+  t = Math.max(timeline.t0, Math.min(result.params.tEnd, next));
   const age = result.cosmology.age;
   tlabel.textContent = `${t.toFixed(2)} Gyr${Math.abs(t - age) < 0.15 ? ' · today' : ''}`;
   frame = computeFrame(result, t);
@@ -393,11 +407,26 @@ function resizeTraits() {
   traitsCanvas.width = Math.floor(traitsCanvas.clientWidth * dpr);
   traitsCanvas.height = Math.floor(120 * dpr);
 }
-window.addEventListener('resize', () => {
+function onResize() {
   map.resize();
   updateInsets();
   timeline.resize();
   timeline.draw(t);
   resizeTraits();
   if (result) drawTraits(traitsCanvas, result, t);
-});
+}
+window.addEventListener('resize', onResize);
+// Moving to a screen with a different pixel density (or browser zoom) changes
+// devicePixelRatio without always firing resize; canvases sized for the old one
+// would draw at the wrong scale.
+function watchPixelRatio() {
+  matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener(
+    'change',
+    () => {
+      onResize();
+      watchPixelRatio();
+    },
+    { once: true },
+  );
+}
+watchPixelRatio();

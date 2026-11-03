@@ -38,6 +38,13 @@ export interface Universe {
   dist(i: number, j: number): number;
   /** The k nearest other nodes, computed on first request. */
   neighbors(i: number): Int32Array;
+  /**
+   * Visit the other nodes within maxR of i, nearest grid rings first. After each
+   * ring, `ringDone` gets a lower bound on the distance of anything not yet
+   * visited and returns true to stop early. That lets a search for the few
+   * nearest matches end long before it has looked at the whole box.
+   */
+  byRings(i: number, maxR: number, visit: (j: number, d: number) => void, ringDone: (beyond: number) => boolean): void;
 }
 
 export function makeUniverse(p: SimParams, rng: Rng = mulberry32(p.seed * 7919 + 1)): Universe {
@@ -143,5 +150,32 @@ export function makeUniverse(p: SimParams, rng: Rng = mulberry32(p.seed * 7919 +
     return out;
   };
 
-  return { n, L, x, y, z, mass, galaxiesPerNode, scaleToObservable, dist, neighbors };
+  const wrapCell = (v: number) => ((v % G) + G) % G;
+  const byRings = (i: number, maxR: number, visit: (j: number, d: number) => void, ringDone: (beyond: number) => boolean) => {
+    const gx = cellOf(x[i]);
+    const gy = cellOf(y[i]);
+    const gz = cellOf(z[i]);
+    // Rings stop before the cube wraps onto itself and would list cells twice;
+    // at that size the search already spans about half the box.
+    const rMax = Math.min(Math.floor((G - 1) / 2), Math.ceil(maxR / cell) + 1);
+    for (let r = 0; r <= rMax; r++) {
+      for (let ox = -r; ox <= r; ox++)
+        for (let oy = -r; oy <= r; oy++)
+          for (let oz = -r; oz <= r; oz++) {
+            // Only the shell of this cube; the inside was the previous rings.
+            if (Math.max(Math.abs(ox), Math.abs(oy), Math.abs(oz)) !== r) continue;
+            const c = (wrapCell(gx + ox) * G + wrapCell(gy + oy)) * G + wrapCell(gz + oz);
+            for (let s = counts[c]; s < counts[c + 1]; s++) {
+              const j = items[s];
+              if (j === i) continue;
+              const d = dist(i, j);
+              if (d <= maxR) visit(j, d);
+            }
+          }
+      // Everything not yet visited is at least r cells away from i's own cell.
+      if (ringDone(r * cell)) return;
+    }
+  };
+
+  return { n, L, x, y, z, mass, galaxiesPerNode, scaleToObservable, dist, neighbors, byRings };
 }

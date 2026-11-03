@@ -136,6 +136,23 @@ Present-day silence was checked against things the answer shouldn't depend on:
 - **Far-field estimate:** it changes almost nothing at the default detection range.
 - **Box size:** this one mattered. A 3 Gly box overstated silence by about 15 points, because one
   empire could fill it and wrap onto itself. Results agree at 4.5, 6 and 9 Gly, so the default is now 6.
+- **Bigger boxes need proportionally more groups.** At 12 Gly, 120k groups match the converged
+  answer (45% ±1 present-day silence), while 60k groups read 4 points high. The viewer's Large
+  setting uses 12 Gly with 120k groups. Scripts default to 6 Gly with 30k groups, which converges
+  and is about 10× faster.
+
+### Performance
+
+Sight checks dominate big boxes. Several changes keep them cheap without changing what is seen:
+
+- **Groups too faint to see are skipped before any light-travel arithmetic.** A group's brightness
+  can never exceed its mass, so this is exact.
+- **The scale factor at emission comes from a table.**
+- **Searches go ring by ring outward over a grid,** stopping once the nearest visible targets are certain.
+- **Only the heaviest 1% of groups are checked beyond typical sight range.**
+
+Typical single runs: 6 Gly takes about 3 s, 12 Gly with 120k groups about 26 s, 24 Gly with 120k
+groups about 28 s, and 150 Gyr at 6 Gly 40–120 s. Memory stays under 500 MB.
 
 ## Findings so far
 
@@ -176,6 +193,18 @@ These hold within this model and its assumptions, and are not claims about the r
   observer had a host, with or without cloaking. A hidden zookeeper needs near-total stealth,
   restraint and the channel all in one host, and selection never assembled that combination.
   Restraint stays around 0.4–0.55, which is drift rather than selection.
+- **The far future fragments into islands.** In 150 Gyr runs, settlement peaks around 30–45 Gyr and
+  then falls steadily (from 94% to 24% at baseline), and strikes stop by about 105 Gyr. Nothing
+  forces this; it comes from the cosmic event horizon. Dark energy shrinks the distance anything can
+  still reach until, around 100 Gyr, it is smaller than the gap between neighbouring galaxy groups.
+  After that every group is an island: collapsed holdings can never be resettled, and nobody can
+  reach anybody.
+- **Sterilization at 1/Gyr is probably too strong.** That rate comes from "lethal" gamma-ray
+  bursts (Piran & Jimenez 2014), meaning ozone-stripping mass extinctions, not the end of all
+  life. Earth has had several and kept going. The model treats a hit as ending a planet's chance,
+  which matches true sterilization, and that is far rarer: perhaps 0.01–0.1/Gyr. At 0.1/Gyr the
+  G-star share at present rises only from 0.8% to 5%, and at rate 1 almost nobody arises near today.
+  A setback model, where a hit resets complex life but microbes survive, would be more faithful.
 - **G stars are a 1% coincidence.** Under the default biology, only about 0.9% of present-day
   technological species orbit G stars, and about 94% orbit K dwarfs, because several hard steps
   favour long habitable windows. Our Sun is therefore a ~1% coincidence unless K-dwarf planets

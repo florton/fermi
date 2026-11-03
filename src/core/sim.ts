@@ -315,9 +315,15 @@ export function runSim(p: SimParams): SimResult {
     const vis = cloaked ? visibility(pGenome[k], 0) : pVis[k];
     return luminosity(tierOf(pLineage[k], te), te - pBorn[k], p.conversionTime, vis, uni.mass[pNode[k]]);
   };
-  /** Can light emitted at te from distance d be seen at tObs with this sensor? */
-  const detectable = (d: number, te: number, tObs: number, lum: number, sensor: number) =>
-    lum > 0 && d * (cosmo.a(tObs) / cosmo.a(te)) <= p.detectRange * sensor * Math.sqrt(lum);
+  /** Can light from distance d, emitted when the scale factor was aEmit, be seen now (aObs) with this sensor? */
+  const detectable = (d: number, aEmit: number, aObs: number, lum: number, sensor: number) =>
+    lum > 0 && d * (aObs / aEmit) <= p.detectRange * sensor * Math.sqrt(lum);
+  /**
+   * Nothing at this node could be seen from d with this sensor, whoever held it:
+   * luminosity never exceeds the node's mass, and redshift only makes it worse.
+   * A cheap test that spares the light-travel arithmetic for most of the box.
+   */
+  const outOfReach = (node: number, d: number, sensor: number) => d > p.detectRange * sensor * Math.sqrt(uni.mass[node]);
   /** Who held `node` at time te, or -1. */
   const holderAt = (node: number, te: number) => {
     for (let k = nodeHead[node]; k >= 0; k = pPrevAtNode[k]) {
@@ -510,21 +516,43 @@ export function runSim(p: SimParams): SimResult {
 
   // How far away holdings in one's own galaxy group are, for seeing them.
   const intraNode = (p.intraNodeSeeing * uni.L) / Math.cbrt(uni.n);
+  // Two-tier sight. Within the distance at which a 99th-percentile-mass node,
+  // fully lit, could be seen, search the grid ring by ring. Beyond it only the
+  // heaviest 1% of nodes could possibly show, so check just those. Exact, and in
+  // a big box far cheaper than visiting every node.
+  const massSorted = Float32Array.from(uni.mass).sort();
+  const heavyMass = massSorted[Math.floor(0.99 * (uni.n - 1))];
+  const heavy: number[] = [];
+  for (let i = 0; i < uni.n; i++) if (uni.mass[i] > heavyMass) heavy.push(i);
+  const sightReach = (sensor: number) => p.detectRange * sensor * Math.sqrt(heavyMass);
+  /** Visit nodes that might be visible from `from` with this sensor, nearest rings first, heavy outliers last. */
+  const lookAround = (from: number, sensor: number, unbounded: boolean, visit: (j: number, d: number) => void, ringDone: (beyond: number) => boolean) => {
+    const near = unbounded ? halfBox : Math.min(halfBox, sightReach(sensor));
+    let stopped = false;
+    uni.byRings(from, near, visit, (beyond) => (stopped = ringDone(beyond)));
+    if (stopped || near >= halfBox) return;
+    for (const j of heavy) {
+      const d = uni.dist(from, j);
+      if (d > near && d <= halfBox) visit(j, d);
+    }
+  };
 
   const observe = (c: Civ, t: number) => {
     const seen = new Set<number>();
     let nearest = Infinity;
-    for (const node of everSettled) {
-      const d = Math.max(uni.dist(c.node, node), node === c.node ? intraNode : 0);
-      if (d > halfBox) continue;
-      const te = cosmo.emission(t, d);
-      if (te < 0) continue;
+    const aObs = cosmo.a(t);
+    const look = (node: number, d: number) => {
+      if (nodeHead[node] < 0 || outOfReach(node, d, 1)) return;
+      const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
+      if (te < 0) return;
       // The light arriving now left at te: find who held the node then.
       const k = holderAt(node, te);
-      if (k < 0 || !detectable(d, te, t, lumAt(k, te), 1)) continue;
+      if (k < 0 || !detectable(d, aEmit, aObs, lumAt(k, te), 1)) return;
       seen.add(pLineage[k]);
       if (d < nearest) nearest = d;
-    }
+    };
+    look(c.node, intraNode);
+    lookAround(c.node, 1, false, look, () => false);
     const farExpected = farExpectation(t);
     const far = rng() < 1 - Math.exp(-farExpected);
     c.saw = { lineages: seen.size, nearest, farExpected, far, hostHere: owner[c.node] >= 0 };
@@ -648,20 +676,37 @@ export function runSim(p: SimParams): SimResult {
           log(t, 'strike', `The ${civs[lineage].name} release self-replicating berserker probes.`, 30, lineage);
         }
         const targets: { k: number; d: number }[] = [];
-        for (const node of everSettled) {
-          const o = owner[node];
-          if (o < 0 || pLineage[o] === lineage) continue;
-          if (restrained(g) && restrained(pGenome[o])) continue;
-          const d = uni.dist(from, node);
-          if (d > halfBox) continue;
-          const te = cosmo.emission(t, d);
-          const k = te < 0 ? -1 : holderAt(node, te);
-          // It has to have been visible then, and the same polity has to still be there now.
-          // Channel holders sense each other now, however dim or far; everyone else needs light.
-          const sensed = hasFtl(lineage, t) && hasFtl(pLineage[o], t);
-          if (!sensed && (k !== o || !detectable(d, te, t, lumAt(k, te), sensor))) continue;
-          targets.push({ k: o, d });
-        }
+        const aObs = cosmo.a(t);
+        const want = p.strikesPerScan;
+        const selfRestrained = restrained(g);
+        const selfFtl = hasFtl(lineage, t);
+        // Search outward and stop once the nearest `want` visible targets are certain.
+        // A channel holder can sense other holders at any distance, so its search isn't bounded by light.
+        lookAround(
+          from,
+          sensor,
+          selfFtl,
+          (node, d) => {
+            const o = owner[node];
+            if (o < 0 || pLineage[o] === lineage) return;
+            if (selfRestrained && restrained(pGenome[o])) return;
+            // Channel holders sense each other now, however dim or far; everyone else needs light.
+            const sensed = selfFtl && hasFtl(pLineage[o], t);
+            if (!sensed) {
+              if (outOfReach(node, d, sensor)) return;
+              const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
+              // It has to have been visible then, and the same polity has to still be there now.
+              const k = te < 0 ? -1 : holderAt(node, te);
+              if (k !== o || !detectable(d, aEmit, aObs, lumAt(k, te), sensor)) return;
+            }
+            targets.push({ k: o, d });
+          },
+          (beyond) => {
+            if (targets.length < want) return false;
+            targets.sort((a, b) => a.d - b.d);
+            return targets[want - 1].d <= beyond;
+          },
+        );
         targets.sort((a, b) => a.d - b.d);
         for (const { k } of targets.slice(0, p.strikesPerScan)) fireStrike(v, k, t, false);
         break;
@@ -787,8 +832,11 @@ export function runSim(p: SimParams): SimResult {
         const mean = new Array<number>(N_TRAITS).fill(0);
         const bins = new Float32Array(CENSUS_BINS);
         let alive = 0;
-        for (let k = 0; k < pNode.length; k++) {
-          if (pDied[k] !== Infinity) continue;
+        // The living holdings only, by owner, rather than every polity that ever was:
+        // over a long run the dead outnumber the living many times over.
+        for (const node of everSettled) {
+          const k = owner[node];
+          if (k < 0) continue;
           alive++;
           const g = pGenome[k];
           for (let i = 0; i < N_TRAITS; i++) mean[i] += g[i];

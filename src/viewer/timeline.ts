@@ -13,6 +13,11 @@ export class Timeline {
   private r: SimResult | null = null;
   private strikeBins = new Float32Array(0);
   private strikeMax = 1;
+  /**
+   * Where the strip starts. The first few Gyr usually hold nothing but star
+   * formation, so the view begins shortly before the first species appears.
+   */
+  t0 = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -20,7 +25,7 @@ export class Timeline {
     const scrub = (e: PointerEvent) => {
       if (!this.r) return;
       const f = Math.min(1, Math.max(0, e.offsetX / canvas.clientWidth));
-      this.onScrub(f * this.r.params.tEnd);
+      this.onScrub(this.t0 + f * (this.r.params.tEnd - this.t0));
     };
     canvas.addEventListener('pointerdown', (e) => {
       down = true;
@@ -33,11 +38,14 @@ export class Timeline {
 
   setResult(r: SimResult) {
     this.r = r;
+    const first = r.civs.reduce((m, c) => Math.min(m, c.tTech), Infinity);
+    this.t0 = Number.isFinite(first) ? Math.max(0, Math.floor(first - 0.5)) : 0;
     const bins = 400;
+    const span = r.params.tEnd - this.t0;
     this.strikeBins = new Float32Array(bins);
     const st = r.strikes;
     for (let s = 0; s < st.launched.length; s++) {
-      const b = Math.min(bins - 1, Math.floor((st.arrived[s] / r.params.tEnd) * bins));
+      const b = Math.min(bins - 1, Math.max(0, Math.floor(((st.arrived[s] - this.t0) / span) * bins)));
       this.strikeBins[b]++;
     }
     this.strikeMax = Math.max(1, ...this.strikeBins);
@@ -60,14 +68,15 @@ export class Timeline {
     if (!r) return;
     const dpr = devicePixelRatio || 1;
     const tEnd = r.params.tEnd;
-    const X = (tt: number) => (tt / tEnd) * w;
+    const t0 = this.t0;
+    const X = (tt: number) => ((tt - t0) / (tEnd - t0)) * w;
     const mid = h * 0.62;
 
     // Settled share of the box.
     ctx.fillStyle = 'rgba(200,210,230,0.14)';
     ctx.beginPath();
     ctx.moveTo(0, mid);
-    for (const s of r.series) ctx.lineTo(X(s.t), mid - s.settled * mid * 0.85);
+    for (const s of r.series) if (s.t >= t0) ctx.lineTo(X(s.t), mid - s.settled * mid * 0.85);
     ctx.lineTo(w, mid);
     ctx.fill();
 
@@ -97,6 +106,11 @@ export class Timeline {
     ctx.fillStyle = 'rgba(138,180,255,0.9)';
     ctx.font = `${Math.round(10 * dpr)}px system-ui, sans-serif`;
     ctx.fillText('today', X(r.cosmology.age) + 3 * dpr, h - 3 * dpr);
+    // The strip's ends, so a trimmed start doesn't read as the Big Bang.
+    ctx.fillStyle = 'rgba(200,210,230,0.6)';
+    ctx.fillText(`${t0} Gyr`, 2 * dpr, h - 3 * dpr);
+    const endLabel = `${tEnd} Gyr`;
+    ctx.fillText(endLabel, w - ctx.measureText(endLabel).width - 2 * dpr, h - 3 * dpr);
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2 * dpr;
     ctx.beginPath();
