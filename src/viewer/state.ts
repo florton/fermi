@@ -40,7 +40,8 @@ export function computeFrame(r: SimResult, t: number): Frame {
     owner[node] = k;
     held[lin]++;
     const g = pol.genome.subarray(k * N_TRAITS, (k + 1) * N_TRAITS);
-    lum[node] = luminosity(tierAt(r.civs[lin].tierTimes, t), t - pol.born[k], r.params.conversionTime, visibility(g, r.params.stealthFloor), r.positions.mass[node]);
+    const floor = r.params.ftlCloak > 0 && r.civs[lin].ftl <= t ? 0 : r.params.stealthFloor;
+    lum[node] = luminosity(tierAt(r.civs[lin].tierTimes, t), t - pol.born[k], r.params.conversionTime, visibility(g, floor), r.positions.mass[node]);
   }
   const st = r.strikes;
   const inFlight: Frame['inFlight'] = [];

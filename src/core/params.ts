@@ -190,6 +190,12 @@ export interface SimParams {
    */
   ftlChance: number;
   /**
+   * 1 if the faster-than-light channel can carry energy as well as messages, so
+   * holders can dump their waste heat through it and remove stealth's floor. Full
+   * stealth then means truly invisible. 0 means the channel only carries messages.
+   */
+  ftlCloak: number;
+  /**
    * Holdings in an observer's own galaxy group are seen from this far away, as a
    * fraction of the typical node spacing, instead of from zero distance. A group
    * is thousands of galaxies across, so "already here" doesn't mean "next door".
@@ -288,6 +294,7 @@ export const DEFAULTS: SimParams = {
   growthCollapse: 0,
   restraintCap: 1,
   ftlChance: 0,
+  ftlCloak: 0,
   intraNodeSeeing: 0.5,
 
   skyResponse: 0.3,

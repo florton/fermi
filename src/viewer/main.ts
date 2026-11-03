@@ -35,6 +35,7 @@ const FIELDS: [key: string, label: string, step: number][] = [
   ['strikeRadius', 'Strike blast reach, Gly', 0.05],
   ['threatResponse', 'Hide after being hit', 0.05],
   ['ftlChance', 'FTL channel discovery chance', 0.05],
+  ['ftlCloak', 'Channel can carry waste heat (0/1)', 1],
   ['strikeKill', 'Strike lethality (0 = no dark forest)', 0.1],
   ['strikeReveal', 'Chance a strike is traced', 0.1],
   ['skyResponse', 'Hide when not alone', 0.05],

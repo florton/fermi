@@ -150,6 +150,18 @@ These hold within this model and its assumptions, and are not claims about the r
   number of observers, but they see their restrained hosts, so silent skies get rarer.
 - **"Already here, hidden" didn't happen.** In 64 universes, none of about 1,500 silent observers
   had someone else in its own galaxy group. Hosts are never dark enough to stay unseen.
+- **At long distances, distance alone silences the sky.** The test gave life a common rate per
+  habitable planet (10⁻⁵/Gyr) but made habitable planets 1,000–10,000× rarer, so
+  civilisations sit 2–4 Gly apart in a 24 Gly box. Present-day silence was 97–99% in every
+  scenario, including the one with no optional strategies.
+  - The dark forest holds and adds a little: stealth evolves to 0.91, and overall silence rises
+    from 67% to 76% against the baseline. But that's no more than the control.
+  - The first "already here, hidden" cases appear: 2% of silent observers in the dark-forest
+    runs. At this coarse resolution, though, "own group" means within roughly 0.4 Gly.
+- **Cloaking via the FTL channel didn't create hidden zookeepers.** At normal spacing, no silent
+  observer had a host, with or without cloaking. A hidden zookeeper needs near-total stealth,
+  restraint and the channel all in one host, and selection never assembled that combination.
+  Restraint stays around 0.4–0.55, which is drift rather than selection.
 - **G stars are a 1% coincidence.** Under the default biology, only about 0.9% of present-day
   technological species orbit G stars, and about 94% orbit K dwarfs, because several hard steps
   favour long habitable windows. Our Sun is therefore a ~1% coincidence unless K-dwarf planets

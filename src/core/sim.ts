@@ -308,8 +308,13 @@ export function runSim(p: SimParams): SimResult {
     (1 + p.lineageStrength * Math.log10(Math.max(1, members[pLineage[k]].length)));
 
   /** Waste heat of polity k's node as emitted at time te. */
-  const lumAt = (k: number, te: number) =>
-    luminosity(tierOf(pLineage[k], te), te - pBorn[k], p.conversionTime, pVis[k], uni.mass[pNode[k]]);
+  const lumAt = (k: number, te: number) => {
+    // With a cloaking channel, a holder can push its waste heat out of normal space:
+    // stealth then has no floor, and full stealth is true invisibility.
+    const cloaked = p.ftlCloak > 0 && civs[pLineage[k]].ftl <= te;
+    const vis = cloaked ? visibility(pGenome[k], 0) : pVis[k];
+    return luminosity(tierOf(pLineage[k], te), te - pBorn[k], p.conversionTime, vis, uni.mass[pNode[k]]);
+  };
   /** Can light emitted at te from distance d be seen at tObs with this sensor? */
   const detectable = (d: number, te: number, tObs: number, lum: number, sensor: number) =>
     lum > 0 && d * (cosmo.a(tObs) / cosmo.a(te)) <= p.detectRange * sensor * Math.sqrt(lum);

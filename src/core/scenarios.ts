@@ -22,6 +22,8 @@ export const SCENARIOS: Record<string, Partial<SimParams>> = {
   sustainability: { growthCollapse: 3 },
   // Rare in nature, but common enough here to see what it does.
   telepathy: { ftlChance: 0.3 },
+  // The same channel, able to carry waste heat away too: "already here, hidden" becomes possible.
+  cloakedChannel: { ftlChance: 0.3, ftlCloak: 1 },
 };
 
 export function scenario(name: string): Partial<SimParams> {
