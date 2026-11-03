@@ -43,6 +43,14 @@ export interface Summary {
    * which also favours universes with more observers in total.
    */
   usLikeObservable: number;
+  /**
+   * "They're already here, hidden," as a number: of observers who saw an empty
+   * sky, the fraction whose own galaxy group someone else already held. Over all
+   * time and for the present window.
+   */
+  silentHosted: number;
+  alreadyHereGivenSilent: number;
+  presentSilentHosted: number;
   /** Of observers later reached by a foreign lineage, median years of warning between looking up and arrival, Gyr. */
   medianWarning: number;
   /** Fraction of observers that are eventually reached. */
@@ -74,6 +82,8 @@ export function summarize(r: SimResult): Summary {
   const age = r.cosmology.age;
   const present = obs.filter((c) => Math.abs(c.tTech - age) < 1);
   const presentSilent = present.filter(isSilent).length;
+  const silentHosted = obs.filter((c) => isSilent(c) && c.saw!.hostHere).length;
+  const presentSilentHosted = present.filter((c) => isSilent(c) && c.saw!.hostHere).length;
   const byClass = emergenceByClass(r.params, cosmo, buildStepTable(r.params, Math.min(r.params.tEnd, 60) + 1), age - 1, age + 1);
   const total = byClass.reduce((a, b) => a + b, 0);
   const g = r.params.starClasses.findIndex((c) => c.name === 'G');
@@ -105,6 +115,9 @@ export function summarize(r: SimResult): Summary {
     gShareNow: Number(gShareNow.toPrecision(4)),
     usLikeFrac: obs.length ? Number(((presentSilent / obs.length) * gShareNow).toPrecision(4)) : NaN,
     usLikeObservable: Number((presentSilent * gShareNow * r.universe.scaleToObservable).toPrecision(4)),
+    silentHosted,
+    alreadyHereGivenSilent: round(silent ? silentHosted / silent : NaN),
+    presentSilentHosted,
     medianWarning: round(warnings.length ? warnings[warnings.length >> 1] : NaN),
     engulfedFrac: round(obs.length ? warnings.length / obs.length : NaN),
     settledAtPresent: round(r.series.length ? at(age).settled : NaN),

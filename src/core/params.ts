@@ -181,6 +181,20 @@ export interface SimParams {
   growthCollapse: number;
   /** Upper bound on the restraint trait; 0 removes the zoo/club option from nature. */
   restraintCap: number;
+  /**
+   * Chance a lineage reaching the top of the tech ladder discovers an instant,
+   * unlimited-range channel. It is instant in the cosmic rest frame, the frame
+   * the simulation's time coordinate already uses, so it can't send messages
+   * into anyone's past. Holders sense each other anywhere and coordinate; nobody
+   * without it can detect it. 0 means no such physics exists.
+   */
+  ftlChance: number;
+  /**
+   * Holdings in an observer's own galaxy group are seen from this far away, as a
+   * fraction of the typical node spacing, instead of from zero distance. A group
+   * is thousands of galaxies across, so "already here" doesn't mean "next door".
+   */
+  intraNodeSeeing: number;
 
   // ── Origins ──────────────────────────────────────────────────────────────
   /**
@@ -273,6 +287,8 @@ export const DEFAULTS: SimParams = {
 
   growthCollapse: 0,
   restraintCap: 1,
+  ftlChance: 0,
+  intraNodeSeeing: 0.5,
 
   skyResponse: 0.3,
   homeRichness: 0.15,

@@ -6,6 +6,7 @@
  * setting in the grid was equally plausible beforehand.
  *
  *   npm run score -- out/sweep-<timestamp>.csv
+ *   npm run score -- out/sweep-a.csv out/sweep-b.csv     (pooled; columns matched by name)
  *
  * Two answers are given, because anthropic reasoning hasn't settled which is right:
  *
@@ -20,20 +21,29 @@
 
 import { readFileSync } from 'node:fs';
 
-const file = process.argv[2];
-if (!file) {
-  console.error('usage: npm run score -- <sweep.csv>');
+const files = process.argv.slice(2);
+if (files.length === 0) {
+  console.error('usage: npm run score -- <sweep.csv> [more.csv ...]');
   process.exit(1);
 }
-const [head, ...lines] = readFileSync(file, 'utf8').trim().split('\n');
-const cols = head.split(',');
-if (!cols.includes('gShareNow')) {
-  console.error(`${file} predates the likelihood fields (gShareNow, presentSilent, usLikeObservable). Re-run the sweep.`);
-  process.exit(1);
-}
-const axes = cols.slice(0, cols.indexOf('seed'));
 type Row = Record<string, string>;
-const rows: Row[] = lines.map((l) => Object.fromEntries(l.split(',').map((v, i) => [cols[i], v])));
+const rows: Row[] = [];
+let axes: string[] = [];
+for (const file of files) {
+  const [head, ...lines] = readFileSync(file, 'utf8').trim().split('\n');
+  const cols = head.split(',');
+  if (!cols.includes('gShareNow')) {
+    console.error(`${file} predates the likelihood fields (gShareNow, presentSilent, usLikeObservable). Re-run the sweep.`);
+    process.exit(1);
+  }
+  const fileAxes = cols.slice(0, cols.indexOf('seed'));
+  if (axes.length === 0) axes = fileAxes;
+  else if (fileAxes.join() !== axes.join()) {
+    console.error(`${file} varies ${fileAxes.join(', ')} but the first file varies ${axes.join(', ')}.`);
+    process.exit(1);
+  }
+  for (const l of lines) rows.push(Object.fromEntries(l.split(',').map((v, i) => [cols[i], v])));
+}
 
 interface Cell {
   key: string;

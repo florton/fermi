@@ -134,6 +134,22 @@ These hold within this model and its assumptions, and are not claims about the r
   - SSA prefers rare life plus fast expansion. Fast colonisers preempt most later observers,
     which makes an early observer like us typical. That is Hanson's explanation of our earliness.
   - SIA prefers moderately rare life plus slow expansion, which gives more observers like us in total.
+- **The hypothesis sweep** pitted seven scenarios against each other, each with five rarity
+  levels and 210 universes in total, scored together:
+  - Rare life is needed in every scenario.
+  - No behavioural explanation moved the fit by more than noise. That covers dark forest v2,
+    berserkers, the zoo/club, transcension, sustainability and the filter ahead.
+  - Cosmic sterilization at the literature rate (about 1/Gyr) scores best (SSA 37%, SIA 69%),
+    mostly because it makes a G-star observer about 40× more typical.
+  - Under selection, stealth rose to about 0.9 once lineages learned from attacks, while
+    restraint and inwardness drifted down. The zoo and transcension fail the "everyone must"
+    test, and hiding spreads without making the sky silent.
+- **An FTL channel doesn't rescue the zoo.** Even with an instant channel that lets restrained
+  lineages punish anyone who attacks them, restraint ends no higher than without it
+  (about 0.4–0.55). The zoo also backfires on the evidence: leaving natives alone doubles the
+  number of observers, but they see their restrained hosts, so silent skies get rarer.
+- **"Already here, hidden" didn't happen.** In 64 universes, none of about 1,500 silent observers
+  had someone else in its own galaxy group. Hosts are never dark enough to stay unseen.
 - **G stars are a 1% coincidence.** Under the default biology, only about 0.9% of present-day
   technological species orbit G stars, and about 94% orbit K dwarfs, because several hard steps
   favour long habitable windows. Our Sun is therefore a ~1% coincidence unless K-dwarf planets

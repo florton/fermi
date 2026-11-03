@@ -69,7 +69,11 @@ export interface Civ {
     farExpected: number;
     /** Whether that expectation came up as a sighting. */
     far: boolean;
+    /** Someone else already held this civ's own galaxy group when it looked up. */
+    hostHere: boolean;
   } | null;
+  /** When the lineage found the faster-than-light channel; Infinity if never. */
+  ftl: number;
   /** When a foreign lineage first settled this civ's home node, if ever. */
   tEngulfed: number;
   /** Most nodes the lineage held at once. */
@@ -137,6 +141,9 @@ export interface Tally {
   /** Berserker swarms released, and holdings they destroyed. */
   swarms: number;
   berserkerKills: number;
+  /** Lineages that found the faster-than-light channel, and strikes they sent to enforce club rules. */
+  ftlLineages: number;
+  punishments: number;
 }
 
 export interface SimResult {
@@ -205,6 +212,7 @@ export function runSim(p: SimParams): SimResult {
     tEngulfed: NaN,
     peak: 0,
     tierTimes: [],
+    ftl: Infinity,
   }));
   const civsAt = new Map<number, number[]>();
   for (const c of civs) {
@@ -238,6 +246,7 @@ export function runSim(p: SimParams): SimResult {
   const swarmMaker: number[] = [];
   const swarmSeen = new Set<number>();
   const released = new Uint8Array(civs.length);
+  const ftlLineages: number[] = [];
 
   const sFrom: number[] = [];
   const sTo: number[] = [];
@@ -269,7 +278,7 @@ export function runSim(p: SimParams): SimResult {
     chronicle.push({ t, kind, text, who });
   };
   const contacts = new Set<number>();
-  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0, tierLosses: 0, swarms: 0, berserkerKills: 0 };
+  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0, tierLosses: 0, swarms: 0, berserkerKills: 0, ftlLineages: 0, punishments: 0 };
 
   const q = new EventQueue();
   for (const c of civs) q.push(c.tTech, EMERGE, c.id);
@@ -424,10 +433,10 @@ export function runSim(p: SimParams): SimResult {
     log(t, 'contact', `First contact: the ${civs[la].name} and the ${civs[lb].name}.`, 80, la);
   };
 
-  const fireStrike = (from: number, targetPolity: number, t: number, retaliation: boolean) => {
+  const fireStrike = (from: number, targetPolity: number, t: number, retaliation: boolean): boolean => {
     const to = pNode[targetPolity];
     const ta = cosmo.arrival(t, uni.dist(pNode[from], to), p.strikeSpeed);
-    if (!(ta < p.tEnd)) return;
+    if (!(ta < p.tEnd)) return false;
     const idx = sFrom.length;
     sFrom.push(pNode[from]);
     sTo.push(to);
@@ -441,6 +450,36 @@ export function runSim(p: SimParams): SimResult {
     q.push(ta, STRIKE, idx, from);
     tally.strikes++;
     if (retaliation) tally.retaliations++;
+    else if (protectedByClub(targetPolity, from, t)) punish(from, t);
+    return true;
+  };
+
+  // ── The faster-than-light channel ────────────────────────────────────────
+  const hasFtl = (lineage: number, t: number) => civs[lineage].ftl <= t;
+  /**
+   * A restrained channel holder attacked by an unrestrained lineage: every
+   * restrained channel holder hears of it at once, which is the one thing that
+   * could let a galactic club enforce its rules across billions of light years.
+   */
+  const protectedByClub = (victim: number, attacker: number, t: number) =>
+    restrained(pGenome[victim]) && !restrained(pGenome[attacker]) && hasFtl(pLineage[victim], t);
+  // A few members answer each offence, not the whole club: enough to make
+  // defection costly without turning one skirmish into a universal barrage.
+  const ENFORCERS = 3;
+  const punish = (offender: number, t: number) => {
+    let sent = 0;
+    for (const lin of ftlLineages) {
+      if (sent >= ENFORCERS) break;
+      if (!hasFtl(lin, t) || tierOf(lin, t) < STRIKE_TIER || pLineage[offender] === lin) continue;
+      const m = members[lin];
+      if (m.length === 0) continue;
+      const enforcer = m[Math.floor(rng() * m.length)];
+      if (!restrained(pGenome[enforcer])) continue;
+      if (fireStrike(enforcer, offender, t, true)) {
+        tally.punishments++;
+        sent++;
+      }
+    }
   };
 
   // ── Observation ──────────────────────────────────────────────────────────
@@ -464,11 +503,14 @@ export function runSim(p: SimParams): SimResult {
     return expected;
   };
 
+  // How far away holdings in one's own galaxy group are, for seeing them.
+  const intraNode = (p.intraNodeSeeing * uni.L) / Math.cbrt(uni.n);
+
   const observe = (c: Civ, t: number) => {
     const seen = new Set<number>();
     let nearest = Infinity;
     for (const node of everSettled) {
-      const d = uni.dist(c.node, node);
+      const d = Math.max(uni.dist(c.node, node), node === c.node ? intraNode : 0);
       if (d > halfBox) continue;
       const te = cosmo.emission(t, d);
       if (te < 0) continue;
@@ -480,7 +522,7 @@ export function runSim(p: SimParams): SimResult {
     }
     const farExpected = farExpectation(t);
     const far = rng() < 1 - Math.exp(-farExpected);
-    c.saw = { lineages: seen.size, nearest, farExpected, far };
+    c.saw = { lineages: seen.size, nearest, farExpected, far, hostHere: owner[c.node] >= 0 };
     observers++;
     if (seen.size === 0 && !far) silent++;
     // A species that looks up and sees it isn't alone may learn to keep quiet.
@@ -573,6 +615,12 @@ export function runSim(p: SimParams): SimResult {
           if (m.length === 0) break;
         }
         if (ev.b === STRIKE_TIER) q.push(t + exponential(rng, 1 / p.scanInterval), SCAN, c.id);
+        if (ev.b === TIERS.length - 1 && p.ftlChance > 0 && rng() < p.ftlChance) {
+          c.ftl = t;
+          ftlLineages.push(c.id);
+          tally.ftlLineages++;
+          log(t, 'tech', `The ${c.name} find a channel faster than light, and hear who else is on it.`, 30, c.id);
+        }
         break;
       }
       case SCAN: {
@@ -604,7 +652,9 @@ export function runSim(p: SimParams): SimResult {
           const te = cosmo.emission(t, d);
           const k = te < 0 ? -1 : holderAt(node, te);
           // It has to have been visible then, and the same polity has to still be there now.
-          if (k !== o || !detectable(d, te, t, lumAt(k, te), sensor)) continue;
+          // Channel holders sense each other now, however dim or far; everyone else needs light.
+          const sensed = hasFtl(lineage, t) && hasFtl(pLineage[o], t);
+          if (!sensed && (k !== o || !detectable(d, te, t, lumAt(k, te), sensor))) continue;
           targets.push({ k: o, d });
         }
         targets.sort((a, b) => a.d - b.d);
@@ -706,6 +756,7 @@ export function runSim(p: SimParams): SimResult {
         // Members of the club don't fight each other.
         if (restrained(gs) && restrained(go)) break;
         if (rng() >= gs[AGGRESSION] * (1 - 0.8 * go[STEALTH])) break;
+        if (protectedByClub(o, s, t)) punish(s, t);
         const ps = strength(s, t);
         const po = p.defenderAdvantage * strength(o, t);
         if (rng() < ps / (ps + po)) {

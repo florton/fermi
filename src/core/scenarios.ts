@@ -20,6 +20,8 @@ export const SCENARIOS: Record<string, Partial<SimParams>> = {
   darkForest: { strikeRadius: 0.3, strikesPerScan: 20, scanInterval: 0.2, stealthCost: 0.5, stealthFloor: 0.01 },
   berserkers: { berserkerChance: 0.3, stealthFloor: 0.01 },
   sustainability: { growthCollapse: 3 },
+  // Rare in nature, but common enough here to see what it does.
+  telepathy: { ftlChance: 0.3 },
 };
 
 export function scenario(name: string): Partial<SimParams> {
