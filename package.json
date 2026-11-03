@@ -1,0 +1,19 @@
+{
+  "name": "fermi",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "check": "node src/cli/check.ts",
+    "run": "node src/cli/run.ts",
+    "sweep": "node src/cli/sweep.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

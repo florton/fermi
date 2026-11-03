@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fermi</title>
+    <link rel="stylesheet" href="/src/viewer/style.css" />
+  </head>
+  <body>
+    <main>
+      <section class="stage">
+        <canvas id="map"></canvas>
+        <div class="overlay" id="overlay">Run a universe to begin.</div>
+        <div class="timebar">
+          <button id="play" disabled>Play</button>
+          <input id="time" type="range" min="0" max="40" step="0.01" value="0" disabled />
+          <span id="tlabel">0.00 Gyr</span>
+        </div>
+      </section>
+      <aside>
+        <h1>Fermi</h1>
+        <p class="sub">One periodic comoving box of the universe. Each dot is a galaxy group; colour is the lineage holding it.</p>
+        <form id="params"></form>
+        <button id="run" class="primary">Run universe</button>
+        <div id="stats" class="stats"></div>
+        <h2>Mean traits of living polities</h2>
+        <canvas id="traits" height="140"></canvas>
+        <div id="legend" class="legend"></div>
+        <h2>Chronicle</h2>
+        <ol id="chronicle" class="chronicle"></ol>
+      </aside>
+    </main>
+    <script type="module" src="/src/viewer/main.ts"></script>
+  </body>
+</html>
