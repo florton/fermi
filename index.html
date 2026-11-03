@@ -8,12 +8,28 @@
   </head>
   <body>
     <canvas id="map"></canvas>
-    <div class="overlay" id="overlay">Pick a scenario and run a universe.</div>
+    <div class="overlay" id="overlay">Choose a universe and press Run.</div>
+    <div class="progress" id="progress" hidden>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-text" id="progress-text"></div>
+    </div>
     <div class="tip" id="tip" hidden></div>
+    <div class="map-key" id="map-key" title="What the map's symbols mean (toggle in Layers)">
+      <span title="Territory, coloured by lineage; brighter means more waste heat"><i class="k-tile"></i>held</span>
+      <span title="Unsettled galaxy groups"><b class="k-dot">·</b>empty</span>
+      <span title="A species looks up and sees no one"><b class="k-white">✶</b>sees no one</span>
+      <span title="A species looks up and sees others"><b class="k-orange">✶</b>sees others</span>
+      <span title="A species that stayed home"><b class="k-white">o</b>stayed home</span>
+      <span title="A strike in flight"><b class="k-line">—•</b>strike</span>
+      <span title="A holding destroyed"><b class="k-red">x</b>destroyed</span>
+    </div>
 
     <header class="topbar" id="top-bar">
       <b class="brand">Fermi</b>
-      <select id="scenario" title="Scenario"></select>
+      <div class="menu">
+        <button id="universe-btn" title="Kinds of civilisation and universe conditions">Universe ▾</button>
+        <div class="popover wide" id="universe" hidden></div>
+      </div>
       <select id="size" title="How much of the universe to simulate">
         <option value="6,30000">Small · 6 Gly (seconds)</option>
         <option value="12,120000" selected>Large · 12 Gly (~30 s)</option>
@@ -48,6 +64,10 @@
       <section>
         <h2>Largest lineages now</h2>
         <ol id="lineages" class="lineages"></ol>
+      </section>
+      <section>
+        <h2>Who holds the universe, by kind</h2>
+        <div id="kinds" class="stats"></div>
       </section>
     </aside>
 

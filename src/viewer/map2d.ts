@@ -33,6 +33,10 @@ export interface Layers {
   labels: boolean;
   /** For the selection: light front, sensor range, and what it saw at first light. */
   reach: boolean;
+  /** Repeat the wrapping box to fill the screen. */
+  wrap: boolean;
+  /** The symbol key under the map (drawn by the page, not the canvas). */
+  key: boolean;
 }
 
 export function inSlice(z: number, L: number, s: Slice): boolean {
@@ -67,6 +71,8 @@ export class MapView {
   private last: Frame | null = null;
   /** Tile size on screen, CSS pixels. */
   private tilePx = 11;
+  /** Repeat the wrapping box to fill the screen. */
+  private wrap = true;
   /** Screen space covered by floating panels and bars, CSS pixels: left, top, right, bottom. */
   private insets = [0, 0, 0, 0];
 
@@ -188,6 +194,40 @@ export class MapView {
     return (0.94 * Math.max(100, Math.min(w, h))) / this.r.params.boxGly;
   }
 
+  /**
+   * Call fn with every on-screen position of a point. The box wraps, so with the
+   * wrap layer on, the view repeats it to fill the screen, the way the universe
+   * would look if you could see past an edge. `margin` lets things that extend
+   * right/down from the point (like a box outline) count as on screen.
+   */
+  private eachImage(x: number, y: number, fn: (sx: number, sy: number) => void, margin = 0) {
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const [sx0, sy0] = this.toScreen(x, y);
+    if (!this.wrap || !this.r) {
+      if (sx0 + margin >= 0 && sy0 + margin >= 0 && sx0 < W && sy0 < H) fn(sx0, sy0);
+      return;
+    }
+    const step = this.r.params.boxGly * this.scale;
+    const i0 = Math.ceil((-margin - sx0) / step);
+    const i1 = Math.floor((W - 1 - sx0) / step);
+    const j0 = Math.ceil((-margin - sy0) / step);
+    const j1 = Math.floor((H - 1 - sy0) / step);
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) fn(sx0 + i * step, sy0 + j * step);
+    }
+  }
+
+  /** The on-screen copy of a point nearest the middle of the clear area. */
+  private nearestImage(x: number, y: number): [number, number] {
+    const [ox, oy] = this.origin();
+    let best: [number, number] = this.toScreen(x, y);
+    if (!this.wrap || !this.r) return best;
+    const step = this.r.params.boxGly * this.scale;
+    best = [best[0] - Math.round((best[0] - ox) / step) * step, best[1] - Math.round((best[1] - oy) / step) * step];
+    return best;
+  }
+
   private toScreen(x: number, y: number): [number, number] {
     const [ox, oy] = this.origin();
     return [(x - this.camX) * this.scale + ox, (y - this.camY) * this.scale + oy];
@@ -224,11 +264,11 @@ export class MapView {
       lines.push(`<b>${s.name}</b> · ${s.fate} · first light ${s.tTech.toFixed(2)} Gyr`);
     }
     if (this.count[c] > 0) {
-      lines.push(`${this.count[c]} group${this.count[c] > 1 ? 's' : ''}, ${this.settled[c]} held`);
       if (this.settled[c] > 0) {
         const lin = r.polities.lineage[this.vote[c]];
         lines.push(`<b>${r.civs[lin].name}</b> · ${tierName(r, lin, this.last.t)}`);
       }
+      lines.push(`${this.count[c]} galaxy group${this.count[c] > 1 ? 's' : ''}`);
     }
     return lines.length ? lines.join('<br>') : null;
   }
@@ -260,14 +300,12 @@ export class MapView {
     const voteCount = new Int32Array(this.count.length);
     const lumSum = new Float32Array(this.count.length);
     const hasSel = new Uint8Array(this.count.length);
-    for (let i = 0; i < x.length; i++) {
-      if (!inSlice(z[i], L, slice)) continue;
-      const [sx, sy] = this.toScreen(x[i], y[i]);
-      if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+    this.wrap = layers.wrap;
+    const bin = (sx: number, sy: number, i: number) => {
       const c = Math.floor(sy / cell) * cols + Math.floor(sx / cell);
       this.count[c]++;
       const o = frame.owner[i];
-      if (o < 0) continue;
+      if (o < 0) return;
       this.settled[c]++;
       lumSum[c] += frame.lum[i];
       if (lineageOf[o] === selLineage) {
@@ -279,6 +317,10 @@ export class MapView {
         voteCount[c] = 1;
       } else if (lineageOf[this.vote[c]] === lineageOf[o]) voteCount[c]++;
       else voteCount[c]--;
+    };
+    for (let i = 0; i < x.length; i++) {
+      if (!inSlice(z[i], L, slice)) continue;
+      this.eachImage(x[i], y[i], (sx, sy) => bin(sx, sy, i));
     }
 
     ctx.textAlign = 'center';
@@ -318,11 +360,12 @@ export class MapView {
       ctx.fillRect(cx - cell / 2 + inset + 0.5, cy - cell / 2 + inset + 0.5, cell - 2 * inset - 1, cell - 2 * inset - 1);
     }
 
-    // Box edge.
-    const [bx0, by0] = this.toScreen(0, 0);
+    // Box edges: one copy, or every repeat when the wrap fills the screen.
     ctx.strokeStyle = '#1d2230';
     ctx.lineWidth = 1;
-    ctx.strokeRect(bx0, by0, L * this.scale, L * this.scale);
+    if (this.wrap) ctx.setLineDash([6, 6]);
+    this.eachImage(0, 0, (bx, by) => ctx.strokeRect(bx, by, L * this.scale, L * this.scale), L * this.scale);
+    ctx.setLineDash([]);
 
     if (layers.strikes) this.drawStrikes(ctx, r, frame, selLineage, slice);
     if (layers.species) this.drawSpecies(ctx, r, frame, slice);
@@ -340,52 +383,53 @@ export class MapView {
       if (!inSlice(z[st.from[s]], L, slice) && !inSlice(z[st.to[s]], L, slice)) continue;
       const a = st.from[s];
       const b = st.to[s];
-      const [sx, sy] = this.toScreen(x[a], y[a]);
-      const [ex, ey] = this.toScreen(x[a] + f * wrapDelta(x[a], x[b], L), y[a] + f * wrapDelta(y[a], y[b], L));
+      // Head offset in screen units, along the short way round the wrap.
+      const hx = f * wrapDelta(x[a], x[b], L) * this.scale;
+      const hy = f * wrapDelta(y[a], y[b], L) * this.scale;
       const [cr, cg, cb] = lineageRgb(st.lineage[s]);
       const dim = sel >= 0 && st.lineage[s] !== sel && st.victim[s] !== sel ? 0.25 : 1;
       ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.6 * dim})`;
-      ctx.beginPath();
-      ctx.moveTo(sx, sy);
-      ctx.lineTo(ex, ey);
-      ctx.stroke();
       ctx.fillStyle = `rgba(255,255,255,${dim})`;
-      ctx.fillText('•', ex, ey);
+      this.eachImage(x[a], y[a], (sx, sy) => {
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + hx, sy + hy);
+        ctx.stroke();
+        ctx.fillText('•', sx + hx, sy + hy);
+      });
     }
     for (const { s, age } of frame.impacts) {
       const b = st.to[s];
       if (!inSlice(z[b], L, slice)) continue;
-      const [sx, sy] = this.toScreen(x[b], y[b]);
       ctx.fillStyle = `rgba(255,80,60,${1 - age})`;
-      ctx.fillText('x', sx, sy);
+      this.eachImage(x[b], y[b], (sx, sy) => ctx.fillText('x', sx, sy));
     }
   }
 
   private drawSpecies(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, slice: Slice) {
     const { x, y, z } = r.positions;
     const L = r.params.boxGly;
-    const W = this.canvas.width;
-    const H = this.canvas.height;
     const cell = this.cell;
     for (const c of r.civs) {
       if (!inSlice(z[c.node], L, slice) || c.fate === 'preempted') continue;
       const age = frame.t - c.tTech;
       if (age < 0) continue;
-      const [sx, sy] = this.toScreen(x[c.node], y[c.node]);
-      if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
       const stayed = (c.fate === 'quiet' || c.fate === 'engulfed') && c.tFate <= frame.t;
+      let glyph: string;
       if (age < FADE) {
         const silent = c.saw && c.saw.lineages === 0 && !c.saw.far;
         ctx.fillStyle = silent ? `rgba(255,255,255,${1 - age / FADE})` : `rgba(255,170,90,${1 - age / FADE})`;
         ctx.font = `bold ${Math.round(cell * 1.4)}px ${MONO}`;
-        ctx.fillText('✶', sx, sy);
+        glyph = '✶';
       } else if (stayed) {
         ctx.fillStyle = 'rgba(230,235,245,0.8)';
         ctx.font = `${cell}px ${MONO}`;
-        ctx.fillText('o', sx, sy);
+        glyph = 'o';
       } else continue;
-      const cc = Math.floor(sy / cell) * this.cols + Math.floor(sx / cell);
-      this.civCell[cc] = c.id;
+      this.eachImage(x[c.node], y[c.node], (sx, sy) => {
+        ctx.fillText(glyph, sx, sy);
+        this.civCell[Math.floor(sy / cell) * this.cols + Math.floor(sx / cell)] = c.id;
+      });
     }
   }
 
@@ -413,7 +457,8 @@ export class MapView {
     const c = r.civs[civId];
     const L = r.params.boxGly;
     const { x, y } = r.positions;
-    const [ox, oy] = this.toScreen(x[c.node], y[c.node]);
+    // With the wrap on there are many copies of their home; annotate the one nearest the middle.
+    const [ox, oy] = this.nearestImage(x[c.node], y[c.node]);
     const dpr = devicePixelRatio || 1;
     ctx.save();
     ctx.lineWidth = dpr;
@@ -423,7 +468,8 @@ export class MapView {
     if (frame.t >= c.tTech && this.sight.length) {
       ctx.strokeStyle = 'rgba(255,170,90,0.35)';
       for (const { node } of this.sight) {
-        const [tx, ty] = this.toScreen(x[c.node] + wrapDelta(x[c.node], x[node], L), y[c.node] + wrapDelta(y[c.node], y[node], L));
+        const tx = ox + wrapDelta(x[c.node], x[node], L) * this.scale;
+        const ty = oy + wrapDelta(y[c.node], y[node], L) * this.scale;
         ctx.beginPath();
         ctx.moveTo(ox, oy);
         ctx.lineTo(tx, ty);

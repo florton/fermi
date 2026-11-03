@@ -1,49 +1,98 @@
 /**
- * Named bundles of nature-facts, one per Fermi explanation, so a sweep can put
- * them side by side. None of them forces an outcome: each changes what the
- * universe is like (how dangerous technology is, whether berserker probes are
- * buildable, whether fast growth is sustainable), and the optional strategies —
- * stealth, inwardness, restraint — stay available in every scenario so that
- * selection, not the scenario, decides whether anyone uses them.
+ * What a universe is made of, in two lists, plus named presets that set both.
  *
- * `noOptions` is the control: the classic expand-or-stay-home model with every
- * optional strategy and learned response removed.
+ * CONDITIONS are facts of nature: how dangerous radiation is, whether new
+ * technology is risky, whether weapons can be decisive, whether
+ * faster-than-light physics exists. ARCHETYPES (archetypes.ts) are the kinds of
+ * civilisation a species can start as. Neither forces an outcome: conditions
+ * change the world, and kinds only set starting temperaments that then mutate
+ * and compete.
  */
 
+import { ARCHETYPES } from './archetypes.ts';
 import { withHardStepRate, type SimParams } from './params.ts';
 
-export const SCENARIOS: Record<string, Partial<SimParams>> = {
-  baseline: {},
-  noOptions: { inwardnessCap: 0, restraintCap: 0, threatResponse: 0, skyResponse: 0 },
-  filterAhead: { tierHazard: 0.5 },
-  sterilization: { sterilizeRate: 1 },
-  darkForest: { strikeRadius: 0.3, strikesPerScan: 20, scanInterval: 0.2, stealthCost: 0.5, stealthFloor: 0.01 },
-  berserkers: { berserkerChance: 0.3, stealthFloor: 0.01 },
-  sustainability: { growthCollapse: 3 },
-  // Rare in nature, but common enough here to see what it does.
-  telepathy: { ftlChance: 0.3 },
-  // The same channel, able to carry waste heat away too: "already here, hidden" becomes possible.
-  cloakedChannel: { ftlChance: 0.3, ftlCloak: 1 },
-  // Every nature-fact above at once. Sterilization removes ~99% of origins, so
-  // this runs with commoner life than the default to leave something to watch.
-  everything: {
-    tierHazard: 0.5,
-    sterilizeRate: 1,
-    strikeRadius: 0.3,
-    strikesPerScan: 20,
-    scanInterval: 0.2,
-    stealthCost: 0.5,
-    stealthFloor: 0.01,
-    berserkerChance: 0.3,
-    growthCollapse: 3,
-    ftlChance: 0.3,
-    ftlCloak: 1,
-    hardSteps: withHardStepRate({}, -4.8).hardSteps,
+export interface Condition {
+  label: string;
+  blurb: string;
+  params: Partial<SimParams>;
+}
+
+export const CONDITIONS: Record<string, Condition> = {
+  sterilization: {
+    label: 'Sterilizing radiation',
+    blurb: 'Very close gamma-ray bursts or supernovae that kill everything (0.03 per Gyr today, ~10× more in the past).',
+    params: { sterilizeRate: 0.03 },
+  },
+  complexWipes: {
+    label: 'Complex-life wipes',
+    blurb: 'Radiation that kills animals and plants but not microbes (0.3 per Gyr today).',
+    params: { resetRate: 0.3 },
+  },
+  filterAhead: {
+    label: 'Dangerous technology',
+    blurb: 'Each new tech tier destroys some holdings that reach it (the great filter ahead).',
+    params: { tierHazard: 0.5 },
+  },
+  growthLimits: {
+    label: 'Growth is unsustainable',
+    blurb: 'Fast expansion makes holdings collapse more often.',
+    params: { growthCollapse: 3 },
+  },
+  decisiveWeapons: {
+    label: 'Decisive weapons',
+    blurb: 'Strikes are frequent, destroy nearby holdings too, and stealth can hide almost everything.',
+    params: { strikeRadius: 0.3, strikesPerScan: 20, scanInterval: 0.2, stealthCost: 0.5, stealthFloor: 0.01 },
+  },
+  ftl: {
+    label: 'Faster-than-light channel',
+    blurb: 'A rare discovery at the top of the tech ladder: instant contact between holders.',
+    params: { ftlChance: 0.3 },
+  },
+  ftlCloak: {
+    label: 'Channel can carry heat',
+    blurb: 'Channel holders can dump waste heat through it and become truly invisible. Needs the channel.',
+    params: { ftlChance: 0.3, ftlCloak: 1 },
   },
 };
+
+export interface Preset {
+  conditions: string[];
+  archetypes: string[];
+  /** Anything else the preset needs, like commoner life to offset sterilization. */
+  extra?: Partial<SimParams>;
+}
+
+export const SCENARIOS: Record<string, Preset> = {
+  baseline: { conditions: [], archetypes: ['mixed'] },
+  // The control: the classic expand-or-stay-home model, with every optional strategy and learned response removed.
+  noOptions: { conditions: [], archetypes: ['mixed'], extra: { inwardnessCap: 0, restraintCap: 0, threatResponse: 0, skyResponse: 0 } },
+  filterAhead: { conditions: ['filterAhead'], archetypes: ['mixed'] },
+  sterilization: { conditions: ['sterilization', 'complexWipes'], archetypes: ['mixed'], extra: withHardStepRate({}, -5.2) },
+  darkForest: { conditions: ['decisiveWeapons'], archetypes: ['mixed'] },
+  berserkers: { conditions: [], archetypes: ['mixed', 'berserker'], extra: { stealthFloor: 0.01 } },
+  sustainability: { conditions: ['growthLimits'], archetypes: ['mixed'] },
+  telepathy: { conditions: ['ftl'], archetypes: ['mixed'] },
+  cloakedChannel: { conditions: ['ftl', 'ftlCloak'], archetypes: ['mixed'] },
+  peacefulGalaxy: { conditions: [], archetypes: ['peaceful', 'communal', 'zookeeper', 'homebody'] },
+  everyKind: { conditions: [], archetypes: Object.keys(ARCHETYPES) },
+  // Every condition and every kind at once. Radiation removes most origins, so life is commoner to leave something to watch.
+  everything: { conditions: Object.keys(CONDITIONS), archetypes: Object.keys(ARCHETYPES), extra: withHardStepRate({}, -4.8) },
+};
+
+/** Parameters for a set of conditions and kinds. */
+export function universeParams(conditions: string[], archetypes: string[]): Partial<SimParams> {
+  const out: Partial<SimParams> = {};
+  for (const c of conditions) {
+    if (!CONDITIONS[c]) throw new Error(`unknown condition "${c}"; known: ${Object.keys(CONDITIONS).join(', ')}`);
+    Object.assign(out, CONDITIONS[c].params);
+  }
+  out.archetypes = archetypes.length ? archetypes : ['mixed'];
+  return out;
+}
 
 export function scenario(name: string): Partial<SimParams> {
   const s = SCENARIOS[name];
   if (!s) throw new Error(`unknown scenario "${name}"; known: ${Object.keys(SCENARIOS).join(', ')}`);
-  return s;
+  return { ...universeParams(s.conditions, s.archetypes), ...s.extra };
 }

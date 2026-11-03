@@ -21,6 +21,7 @@
  * universe looks like this sample. "Silent" means it saw nobody either way.
  */
 
+import { ARCHETYPES, archetypeGenome } from './archetypes.ts';
 import { buildStepTable, sampleOrigins } from './biology.ts';
 import { makeCosmology, type Cosmology } from './cosmology.ts';
 import {
@@ -30,6 +31,7 @@ import {
   INWARDNESS,
   N_TRAITS,
   RESTRAINT,
+  UNITY,
   SPEED,
   STEALTH,
   genomeDistance,
@@ -74,6 +76,10 @@ export interface Civ {
   } | null;
   /** When the lineage found the faster-than-light channel; Infinity if never. */
   ftl: number;
+  /** The kind of civilisation it started as (a key of ARCHETYPES). */
+  archetype: string;
+  /** The alliance it ended in, as the id of its founding lineage; its own id if it never allied. */
+  alliance: number;
   /** When a foreign lineage first settled this civ's home node, if ever. */
   tEngulfed: number;
   /** Most nodes the lineage held at once. */
@@ -144,6 +150,8 @@ export interface Tally {
   /** Lineages that found the faster-than-light channel, and strikes they sent to enforce club rules. */
   ftlLineages: number;
   punishments: number;
+  /** Times two communal lineages joined forces. */
+  alliances: number;
 }
 
 export interface SimResult {
@@ -181,7 +189,8 @@ const CENSUS_BINS = 64;
 const CENSUS_MIN = 0.01;
 const CENSUS_PER_DECADE = 16;
 
-export function runSim(p: SimParams): SimResult {
+/** `onProgress` is called now and then with the fraction of simulated time done, 0..1. */
+export function runSim(p: SimParams, onProgress?: (fraction: number) => void): SimResult {
   const started = performance.now();
   const rng = mulberry32(p.seed);
   const cosmo: Cosmology = makeCosmology();
@@ -198,6 +207,12 @@ export function runSim(p: SimParams): SimResult {
     if (g[RESTRAINT] > p.restraintCap) g[RESTRAINT] = p.restraintCap;
     return g;
   };
+  // Each new species starts as one of the enabled kinds.
+  for (const a of p.archetypes) if (!ARCHETYPES[a]) throw new Error(`unknown archetype "${a}"; known: ${Object.keys(ARCHETYPES).join(', ')}`);
+  const origin = () => {
+    const archetype = p.archetypes[Math.floor(rng() * p.archetypes.length)];
+    return { archetype, genome: capped(archetypeGenome(ARCHETYPES[archetype], randomGenome(rng), rng)) };
+  };
   const civs: Civ[] = sample.origins.map((o, id) => ({
     id,
     name: lineageName(id),
@@ -205,7 +220,7 @@ export function runSim(p: SimParams): SimResult {
     tForm: o.tForm,
     tTech: o.tTech,
     starClass: o.starClass,
-    genome: capped(randomGenome(rng)),
+    ...origin(),
     fate: 'pending',
     tFate: NaN,
     saw: null,
@@ -213,6 +228,7 @@ export function runSim(p: SimParams): SimResult {
     peak: 0,
     tierTimes: [],
     ftl: Infinity,
+    alliance: id,
   }));
   const civsAt = new Map<number, number[]>();
   for (const c of civs) {
@@ -278,7 +294,7 @@ export function runSim(p: SimParams): SimResult {
     chronicle.push({ t, kind, text, who });
   };
   const contacts = new Set<number>();
-  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0, tierLosses: 0, swarms: 0, berserkerKills: 0, ftlLineages: 0, punishments: 0 };
+  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0, tierLosses: 0, swarms: 0, berserkerKills: 0, ftlLineages: 0, punishments: 0, alliances: 0 };
 
   const q = new EventQueue();
   for (const c of civs) q.push(c.tTech, EMERGE, c.id);
@@ -300,12 +316,34 @@ export function runSim(p: SimParams): SimResult {
   };
   const speedOf = (k: number, t: number) =>
     (p.speedMin + (p.speedMax - p.speedMin) * pGenome[k][SPEED]) * TIERS[Math.max(0, tierOf(pLineage[k], t))].speed;
+  // Alliances of communal lineages, as a union-find over lineage ids.
+  const allyParent = Int32Array.from(civs, (_, i) => i);
+  const allyOf = (l: number): number => {
+    while (allyParent[l] !== l) l = allyParent[l] = allyParent[allyParent[l]];
+    return l;
+  };
+  const allyLineages = new Map<number, number[]>();
+  const allied = (la: number, lb: number) => la !== lb && allyOf(la) === allyOf(lb);
+  const unite = (la: number, lb: number) => {
+    const ra = allyOf(la);
+    const rb = allyOf(lb);
+    if (ra === rb) return;
+    allyParent[rb] = ra;
+    allyLineages.set(ra, [...(allyLineages.get(ra) ?? [ra]), ...(allyLineages.get(rb) ?? [rb])]);
+    allyLineages.delete(rb);
+  };
+  /** Holdings counted on a lineage's side in a fight: its own, or its whole alliance's. */
+  const sideSize = (l: number) => {
+    const group = allyLineages.get(allyOf(l));
+    return group ? group.reduce((n, x) => n + members[x].length, 0) : members[l].length;
+  };
+
   const isKin = (a: number, b: number) =>
-    pLineage[a] === pLineage[b] && genomeDistance(pGenome[a], pGenome[b]) < p.kinThreshold;
+    (pLineage[a] === pLineage[b] && genomeDistance(pGenome[a], pGenome[b]) < p.kinThreshold) || allied(pLineage[a], pLineage[b]);
   const strength = (k: number, t: number) =>
     power(pGenome[k], p.stealthCost) *
     TIERS[Math.max(0, tierOf(pLineage[k], t))].power *
-    (1 + p.lineageStrength * Math.log10(Math.max(1, members[pLineage[k]].length)));
+    (1 + p.lineageStrength * Math.log10(Math.max(1, sideSize(pLineage[k]))));
 
   /** Waste heat of polity k's node as emitted at time te. */
   const lumAt = (k: number, te: number) => {
@@ -575,6 +613,7 @@ export function runSim(p: SimParams): SimResult {
       truncated = true;
       break;
     }
+    if (onProgress && (events & 0x3fff) === 0) onProgress(t / p.tEnd);
     switch (ev.kind) {
       case EMERGE: {
         const c = civs[ev.a];
@@ -591,7 +630,8 @@ export function runSim(p: SimParams): SimResult {
         observe(c, t);
         const s = c.saw!;
         const what = s.lineages ? `${s.lineages} other civilisation${s.lineages > 1 ? 's' : ''}` : s.far ? 'a distant glow of someone' : 'an empty sky';
-        log(t, 'origin', `The ${c.name} become technological (${p.starClasses[c.starClass].name} star) and see ${what}.`, 25, c.id);
+        const kind = c.archetype === 'mixed' ? '' : `, ${ARCHETYPES[c.archetype].label.toLowerCase()}`;
+        log(t, 'origin', `The ${c.name} become technological (${p.starClasses[c.starClass].name} star${kind}) and see ${what}.`, 25, c.id);
         const survival = Math.pow(p.filterSurvival, 2 * (1 - c.genome[CAUTION]));
         if (rng() >= survival) {
           c.fate = 'filtered';
@@ -617,7 +657,9 @@ export function runSim(p: SimParams): SimResult {
         c.fate = 'expanding';
         // Draw the whole tech ladder now; caution climbs it more slowly.
         let tt = t;
-        for (let k = 0; k < TIERS.length; k++) {
+        // Plateau civilisations stop climbing early; everyone else can reach the top.
+        const topTier = ARCHETYPES[c.archetype].maxTier ?? TIERS.length - 1;
+        for (let k = 0; k <= topTier; k++) {
           if (k > 0) tt += exponential(rng, 1 / (p.techStep * (1 + 0.5 * c.genome[CAUTION])));
           c.tierTimes.push(tt);
           if (k > 0 && tt < p.tEnd) q.push(tt, TIER, c.id, k);
@@ -668,7 +710,8 @@ export function runSim(p: SimParams): SimResult {
         const sensor = TIERS[Math.max(0, tierOf(lineage, t))].sensor;
         const from = pNode[v];
         // Once, an aggressive lineage may let loose killers that will outlive it.
-        if (p.berserkerChance > 0 && !released[lineage] && rng() < p.berserkerChance) {
+        const releaseChance = ARCHETYPES[civs[lineage].archetype].berserker ? p.berserkerBuildChance : p.berserkerChance;
+        if (releaseChance > 0 && !released[lineage] && rng() < releaseChance) {
           released[lineage] = 1;
           swarmMaker.push(lineage);
           q.push(t, BERSERK, swarmMaker.length - 1, from);
@@ -688,7 +731,7 @@ export function runSim(p: SimParams): SimResult {
           selfFtl,
           (node, d) => {
             const o = owner[node];
-            if (o < 0 || pLineage[o] === lineage) return;
+            if (o < 0 || pLineage[o] === lineage || allied(lineage, pLineage[o])) return;
             if (selfRestrained && restrained(pGenome[o])) return;
             // Channel holders sense each other now, however dim or far; everyone else needs light.
             const sensed = selfFtl && hasFtl(pLineage[o], t);
@@ -803,6 +846,13 @@ export function runSim(p: SimParams): SimResult {
         if (la !== lb) meet(la, lb, t);
         const gs = pGenome[s];
         const go = pGenome[o];
+        // Two communal lineages that meet join forces instead of fighting.
+        if (la !== lb && gs[UNITY] >= 0.5 && go[UNITY] >= 0.5) {
+          unite(la, lb);
+          tally.alliances++;
+          log(t, 'contact', `The ${civs[la].name} and the ${civs[lb].name} unite.`, 60, la);
+          break;
+        }
         // Members of the club don't fight each other.
         if (restrained(gs) && restrained(go)) break;
         if (rng() >= gs[AGGRESSION] * (1 - 0.8 * go[STEALTH])) break;
@@ -866,6 +916,8 @@ export function runSim(p: SimParams): SimResult {
       }
     }
   }
+
+  for (const c of civs) c.alliance = allyOf(c.id);
 
   const np = pNode.length;
   const genome = new Float32Array(np * N_TRAITS);

@@ -1,5 +1,5 @@
 /**
- * What a civilisation is, for the purposes of this simulation: seven numbers in
+ * What a civilisation is, for the purposes of this simulation: eight numbers in
  * [0, 1], each with a benefit and a cost, so that no setting wins everywhere.
  *
  *   expansionism  benefit: spreads at all, and launches sooner
@@ -28,6 +28,12 @@
  *                 cost:    forgoes every node with a young civilisation in it, and
  *                          lets future competitors grow up
  *                 params.restraintCap = 0 removes the option.
+ *   unity         above 0.5, two lineages that meet and are both communal form an
+ *                 alliance
+ *                 benefit: allies never fight each other and count their combined
+ *                          size in any war
+ *                 cost:    never settle or take an ally's holdings, so they give
+ *                          up room to grow
  *
  * A genome is copied with mutation every time a node is settled, so a lineage
  * that spans thousands of nodes is a population, and selection acts on it.
@@ -35,7 +41,7 @@
 
 import { normal, type Rng } from './rng.ts';
 
-export const TRAITS = ['expansionism', 'speed', 'aggression', 'stealth', 'caution', 'inwardness', 'restraint'] as const;
+export const TRAITS = ['expansionism', 'speed', 'aggression', 'stealth', 'caution', 'inwardness', 'restraint', 'unity'] as const;
 export type Trait = (typeof TRAITS)[number];
 export const EXPANSIONISM = 0;
 export const SPEED = 1;
@@ -44,6 +50,7 @@ export const STEALTH = 3;
 export const CAUTION = 4;
 export const INWARDNESS = 5;
 export const RESTRAINT = 6;
+export const UNITY = 7;
 export const N_TRAITS = TRAITS.length;
 
 export type Genome = Float32Array;

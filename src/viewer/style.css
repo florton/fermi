@@ -45,6 +45,115 @@ body {
   font-size: 15px;
 }
 
+.progress {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px));
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  z-index: 6;
+  backdrop-filter: blur(6px);
+}
+
+.progress[hidden] {
+  display: none;
+}
+
+.progress-track {
+  height: 6px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+
+.progress-text {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The map key: one small line tucked into the bottom-right corner above the timeline. */
+.map-key {
+  position: fixed;
+  right: 8px;
+  bottom: calc(var(--foot) + 4px);
+  max-width: calc(100vw - 16px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 1px 8px;
+  padding: 2px 7px;
+  background: rgba(13, 16, 24, 0.7);
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--muted);
+  z-index: 2;
+}
+
+.map-key[hidden] {
+  display: none;
+}
+
+.map-key span {
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.map-key b {
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.k-tile {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #3b6db0, #8ab4ff);
+}
+
+.k-dot {
+  color: #96a0b4;
+}
+
+.k-white {
+  color: #ffffff;
+}
+
+.k-orange {
+  color: #ffaa5a;
+}
+
+.k-red {
+  color: #ff503c;
+}
+
+.k-line {
+  color: #e6c36e;
+  letter-spacing: -2px;
+}
+
+body:not(.panels-hidden) .map-key {
+  /* Sit just left of the right panel instead of under it. */
+  right: 360px;
+}
+
 .tip {
   position: fixed;
   pointer-events: none;
@@ -115,6 +224,50 @@ body {
 
 .popover[hidden] {
   display: none;
+}
+
+.popover.wide {
+  width: min(640px, calc(100vw - 24px));
+  max-height: calc(100vh - var(--bar) - 24px);
+  overflow-y: auto;
+  gap: 8px;
+}
+
+.popover .cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 18px;
+}
+
+.popover .cols label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  white-space: normal;
+  column-gap: 8px;
+  padding: 3px 0;
+}
+
+.popover .cols label input {
+  margin-top: 3px;
+  grid-row: span 2;
+}
+
+.popover .cols small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.popover .row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.popover h3 {
+  margin: 6px 0 4px;
 }
 
 .popover label {
@@ -422,6 +575,16 @@ input[type='number'] {
 
 /* Narrow screens: one panel at a time, full width, toggled from the top bar. */
 @media (max-width: 900px) {
+  .popover .cols {
+    grid-template-columns: 1fr;
+  }
+  .popover.wide {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    top: calc(var(--bar) + 40px);
+  }
   .slice,
   .sep {
     display: none;
@@ -445,6 +608,10 @@ input[type='number'] {
     display: none;
   }
   #speed {
+    display: none;
+  }
+  /* An open panel sits where the key would; one at a time. */
+  body:not(.panels-hidden) .map-key {
     display: none;
   }
 }

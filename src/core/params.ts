@@ -57,12 +57,23 @@ export interface SimParams {
   /** The ladder from chemistry to radio telescopes. Every step must finish inside the habitable window. */
   hardSteps: HardStep[];
   /**
-   * Rate of sterilizing events (gamma-ray bursts, nearby supernovae) a planet
-   * faces today, per Gyr. It scales with the cosmic star formation rate, so it
-   * was ~10× higher 10 Gyr ago. Estimates for the Milky Way are of order one
-   * lethal burst per Gyr (Piran & Jimenez 2014); 0 turns it off.
+   * Rate of true sterilizations a planet faces today, per Gyr: radiation (a
+   * very close gamma-ray burst or supernova) that kills everything, so the
+   * planet's chance is over. Scales with the cosmic star formation rate, so it
+   * was ~10× higher 10 Gyr ago. Far rarer than "lethal" bursts in the
+   * literature, which are mass extinctions; plausibly 0.01–0.1/Gyr. 0 turns it off.
    */
   sterilizeRate: number;
+  /**
+   * Rate of complex-life wipes today, per Gyr: radiation that kills animals and
+   * plants but not microbes. Only the steps after the first `microbialSteps`
+   * are exposed. Piran & Jimenez (2014) put lethal bursts near Earth at ~1/Gyr,
+   * but a lethal burst is a mass extinction, which Earth has survived five
+   * times, so a complete wipe of complex life is rarer than that.
+   */
+  resetRate: number;
+  /** How many of the first hard-step stages are microbial and survive a complex-life wipe. */
+  microbialSteps: number;
   /** Safety cap on technological origins sampled in one run. */
   maxCivs: number;
 
@@ -182,6 +193,13 @@ export interface SimParams {
   /** Upper bound on the restraint trait; 0 removes the zoo/club option from nature. */
   restraintCap: number;
   /**
+   * Kinds of civilisation a new species can start as (keys of ARCHETYPES in
+   * archetypes.ts); each new species picks one at random. ['mixed'] is fully random traits.
+   */
+  archetypes: string[];
+  /** Chance per scan that a berserker-building lineage releases its swarm (at most once). */
+  berserkerBuildChance: number;
+  /**
    * Chance a lineage reaching the top of the tech ladder discovers an instant,
    * unlimited-range channel. It is instant in the cosmic rest frame, the frame
    * the simulation's time coordinate already uses, so it can't send messages
@@ -252,6 +270,8 @@ export const DEFAULTS: SimParams = {
     { name: 'technology', log10Rate: 0 },
   ],
   sterilizeRate: 0,
+  resetRate: 0,
+  microbialSteps: 2,
   maxCivs: 100000,
 
   filterSurvival: 0.5,
@@ -293,6 +313,8 @@ export const DEFAULTS: SimParams = {
 
   growthCollapse: 0,
   restraintCap: 1,
+  archetypes: ['mixed'],
+  berserkerBuildChance: 0.3,
   ftlChance: 0,
   ftlCloak: 0,
   intraNodeSeeing: 0.5,
@@ -323,5 +345,6 @@ export function withDefaults(over: Partial<SimParams> = {}): SimParams {
     ...over,
     starClasses: (over.starClasses ?? DEFAULTS.starClasses).map((c) => ({ ...c })),
     hardSteps: (over.hardSteps ?? DEFAULTS.hardSteps).map((s) => ({ ...s })),
+    archetypes: [...(over.archetypes?.length ? over.archetypes : DEFAULTS.archetypes)],
   };
 }

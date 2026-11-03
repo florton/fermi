@@ -44,18 +44,28 @@ leans toward expansion (`homeRichness`).
 | Explanation | Kind | In the model |
 | --- | --- | --- |
 | Rare life, Rare Earth | Nature | `hardSteps`, `habitablePerMsun`, star-class weights |
-| Cosmic sterilization | Nature | `sterilizeRate` |
+| Radiation hazards | Nature | `sterilizeRate` (kills everything), `resetRate` (wipes complex life; microbes survive) |
 | Great filter ahead | Nature | `tierHazard` |
 | Interstellar travel is hard | Nature | `speedMax`, `launchDelay` |
 | Growth is unsustainable | Nature | `growthCollapse` |
 | Dark forest | Options plus nature | stealth and strikes as options; `strikeRadius` and `stealthFloor` as nature |
-| Berserkers | Nature | `berserkerChance`, whether the technology exists at all |
+| Berserkers | Kind | berserker builders release swarms; other kinds never do |
 | Transcension | Option | inwardness trait (`inwardnessCap` 0 removes it) |
 | Zoo, galactic club | Option | restraint trait (`restraintCap` 0 removes it) |
+| Unification | Option | unity trait: communal lineages that meet ally, never fight, and fight as one |
+| Technology plateaus | Kind | some species never get past interstellar probes |
 | Percolation (Landis) | Emerges | from expansion mutating and colonies collapsing |
 
-`src/core/scenarios.ts` bundles these into named presets for sweeps (`--vary scenario=...`)
-and for the viewer's scenario picker.
+**Kinds of civilisation** (`src/core/archetypes.ts`, `--archetypes a,b,...`) set a new species'
+starting temperament. The kinds are mixed, grabby expanders, homebodies, peaceful, communal
+uniters, zookeepers, hiders, dark-forest hunters, berserker builders, transcenders and tech
+plateau. When several are enabled, each species picks one at random. Traits still mutate, and
+selection decides which kinds end up holding the universe.
+
+**Universe conditions** (`src/core/scenarios.ts`, `--conditions a,b,...`) are facts of nature:
+sterilizing radiation, complex-life wipes, dangerous technology, unsustainable growth, decisive
+weapons, a faster-than-light channel, and a channel that can carry heat. Named presets bundle
+kinds and conditions for sweeps (`--vary scenario=...`) and for the viewer's Universe menu.
 
 **Deliberately left out:**
 - **Aestivation**, waiting for the cold far future to compute. Its payoff lies beyond the
@@ -95,7 +105,11 @@ lineage names on the larger territories. Panels float over it and can be hidden.
   ticks along the top mark first light (white for an empty sky, orange for seeing someone), red
   bars mark strikes, and a marker shows today. Click or drag it to scrub.
 - **Layers:** turn territory, unsettled groups, species, strikes, labels and selection overlays on
-  or off, and set the tile size.
+  or off, and set the tile size. The box wraps, so by default the map repeats it to fill the
+  screen, with dashed outlines between copies.
+- **Universe menu:** a preset, plus tick lists of kinds of civilisation and universe conditions.
+  The left panel shows which kinds hold the universe at the current moment.
+- **Progress:** a bar shows simulated time and a rough time remaining while a universe runs.
 - **Run and play:** the main button simulates once, then becomes Play/Pause for that universe.
   It switches back to Run only after you change a setting. New seed simulates a fresh universe
   with the same settings.
@@ -199,6 +213,11 @@ These hold within this model and its assumptions, and are not claims about the r
   still reach until, around 100 Gyr, it is smaller than the gap between neighbouring galaxy groups.
   After that every group is an island: collapsed holdings can never be resettled, and nobody can
   reach anybody.
+- **Early runs of kinds (one seed each, rarity −5.6):**
+  - A universe of only tech-plateau species is silent: all 25 present-day observers saw nothing.
+  - A universe of peaceful, communal, zookeeper and homebody species is louder than the default.
+    Unopposed expansion is easy to see, and only 4 of 24 observers saw nothing.
+  - These are single runs, not sweeps.
 - **Sterilization at 1/Gyr is probably too strong.** That rate comes from "lethal" gamma-ray
   bursts (Piran & Jimenez 2014), meaning ozone-stripping mass extinctions, not the end of all
   life. Earth has had several and kept going. The model treats a hit as ending a planet's chance,

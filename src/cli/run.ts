@@ -4,13 +4,14 @@
  *   npm run run -- --seed 3 --nodes 50000 --preemption 0.5
  *   npm run run -- --json        (summary only, as JSON)
  *   npm run run -- --scenario berserkers --hardStepLog10 -5.6
+ *   npm run run -- --archetypes peaceful,communal,hunter --conditions sterilization,ftl
  *
  * Any scalar field of SimParams can be overridden as --name value. --scenario
  * applies a named bundle from core/scenarios.ts first, so explicit flags win.
  */
 
 import { withDefaults, withHardStepRate, type SimParams } from '../core/params.ts';
-import { scenario } from '../core/scenarios.ts';
+import { scenario, universeParams } from '../core/scenarios.ts';
 import { runSim } from '../core/sim.ts';
 import { summarize } from '../core/summary.ts';
 
@@ -18,6 +19,7 @@ export function parseOverrides(argv: string[]): { over: Partial<SimParams>; flag
   const over: Record<string, number> = {};
   const flags = new Set<string>();
   let base: Partial<SimParams> = {};
+  let lists: Partial<SimParams> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) continue;
@@ -28,12 +30,14 @@ export function parseOverrides(argv: string[]): { over: Partial<SimParams>; flag
       continue;
     }
     if (key === 'scenario') base = scenario(next);
+    else if (key === 'archetypes') lists = { ...lists, archetypes: next.split(',') };
+    else if (key === 'conditions') lists = { ...universeParams(next.split(','), lists.archetypes ?? []), ...lists };
     else over[key] = Number(next);
     i++;
   }
   // The shorthand isn't a SimParams field; expand it into the hard-step rates.
   const { hardStepLog10, ...rest } = over;
-  const merged = { ...base, ...rest } as Partial<SimParams>;
+  const merged = { ...base, ...lists, ...rest } as Partial<SimParams>;
   const params = hardStepLog10 === undefined ? merged : withHardStepRate(merged, hardStepLog10);
   return { over: params, flags };
 }

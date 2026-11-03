@@ -1,14 +1,22 @@
-/** Runs the simulation off the main thread so the page stays responsive. */
+/** Runs the simulation off the main thread so the page stays responsive, reporting progress as it goes. */
 
 import { withDefaults, type SimParams } from '../core/params.ts';
 import { runSim } from '../core/sim.ts';
 import { summarize } from '../core/summary.ts';
 
 self.onmessage = (e: MessageEvent<Partial<SimParams>>) => {
-  const result = runSim(withDefaults(e.data));
+  const post = (msg: unknown, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(msg, transfer);
+  let lastSent = 0;
+  const result = runSim(withDefaults(e.data), (fraction) => {
+    // A few dozen updates are plenty for a progress bar.
+    if (fraction - lastSent < 0.01) return;
+    lastSent = fraction;
+    post({ progress: fraction });
+  });
+  post({ progress: 1, summarizing: true });
   const summary = summarize(result);
   const { polities: pol, positions: pos, strikes: st } = result;
-  (self as unknown as Worker).postMessage({ result, summary }, [
+  post({ result, summary }, [
     pol.node.buffer,
     pol.lineage.buffer,
     pol.parent.buffer,

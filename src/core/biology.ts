@@ -15,12 +15,22 @@
  * the window, whatever the individual rates. That is one reason to suspect
  * Earth's steps were hard — we arrived late in our own window.
  *
- * Cosmic sterilization (gamma-ray bursts, nearby supernovae) is a fact of
- * nature layered on top: a Poisson hazard that tracks the cosmic star formation
- * rate, so it was roughly ten times worse at cosmic noon than now. A biosphere
- * has to get from planet formation to technology without being hit. Life could
- * in principle restart after a hit, but with hard steps a restart almost never
- * finishes in time, so a hit is treated as the end of that planet's chance.
+ * Radiation hazards (gamma-ray bursts, nearby supernovae) are facts of nature
+ * layered on top, two of them, both Poisson rates that track the cosmic star
+ * formation rate, so they were roughly ten times worse at cosmic noon than now:
+ *
+ *   true sterilization  everything dies; the planet's chance is over.
+ *   complex-life wipe   animals and plants go, microbes survive. Only the
+ *                       later steps are exposed: the stretch from the last
+ *                       step microbes can carry (params.microbialSteps) to
+ *                       technology. Hard steps conditioned on finishing in time
+ *                       are spread roughly evenly through the run (Carter), so
+ *                       that stretch starts a predictable fraction of the way in.
+ *
+ * After a wipe, the later steps could in principle be repeated, but with hard
+ * steps a second run almost never finishes in time, so a hit during the exposed
+ * stretch ends that attempt. Ordinary mass extinctions cost a few Myr of
+ * recovery — noise at these scales — and aren't modelled.
  */
 
 import { MPC_PER_GLY, type Cosmology } from './cosmology.ts';
@@ -116,18 +126,33 @@ export function metalFactor(cosmo: Cosmology, p: SimParams, t: number): number {
 }
 
 /**
- * Cumulative sterilization hazard from t = 0 to t. The rate is
- * sterilizeRate × sfr(t)/sfr(today), so its integral is a rescaled stellar mass formed.
+ * Expected hits between t0 and t1 for a hazard whose present-day rate is
+ * `rate`. The rate follows sfr(t)/sfr(today), so its integral is a rescaled
+ * stellar mass formed.
  */
-export function sterilizationHazard(cosmo: Cosmology, p: SimParams, t: number): number {
-  if (p.sterilizeRate <= 0) return 0;
-  return (p.sterilizeRate * cosmo.starsFormed(t)) / cosmo.sfr(cosmo.age);
+function hits(cosmo: Cosmology, rate: number, t0: number, t1: number): number {
+  if (rate <= 0 || t1 <= t0) return 0;
+  return (rate * (cosmo.starsFormed(t1) - cosmo.starsFormed(t0))) / cosmo.sfr(cosmo.age);
 }
 
-/** Chance a biosphere on a planet formed at tf is never sterilized before t. */
-export function survivesSterilization(cosmo: Cosmology, p: SimParams, tf: number, t: number): number {
-  if (p.sterilizeRate <= 0) return 1;
-  return Math.exp(-(sterilizationHazard(cosmo, p, t) - sterilizationHazard(cosmo, p, tf)));
+/**
+ * How far into a successful run the exposed stretch begins, as a fraction: the
+ * hard steps microbes can carry, out of all hard steps plus one (Carter's even spacing).
+ */
+export function exposedFrom(p: SimParams): number {
+  const hard = p.hardSteps.map((s) => s.log10Rate < 0);
+  const total = hard.filter(Boolean).length;
+  const carried = hard.slice(0, p.microbialSteps).filter(Boolean).length;
+  return total === 0 ? 0 : carried / (total + 1);
+}
+
+export const hasRadiation = (p: SimParams) => p.sterilizeRate > 0 || p.resetRate > 0;
+
+/** Chance a biosphere formed at tf reaches technology at tf + τ without a fatal hit. */
+export function survivesRadiation(cosmo: Cosmology, p: SimParams, tf: number, tau: number): number {
+  if (!hasRadiation(p)) return 1;
+  const tTech = tf + tau;
+  return Math.exp(-hits(cosmo, p.sterilizeRate, tf, tTech) - hits(cosmo, p.resetRate, tf + exposedFrom(p) * tau, tTech));
 }
 
 /** Habitable-zone rocky planets formed per comoving Mpc³ per Gyr at time t. */
@@ -151,16 +176,16 @@ export function emergenceByClass(p: SimParams, cosmo: Cosmology, table: StepTabl
       const hi = Math.min(cl.window, t1 - tf);
       const lo = Math.max(0, t0 - tf);
       if (hi <= lo) return;
-      if (p.sterilizeRate <= 0) {
+      if (!hasRadiation(p)) {
         out[c] += planets * cl.frac * cl.weight * (table.cdf(hi) - table.cdf(lo));
         return;
       }
-      // With sterilization the survival factor depends on τ, so walk the completion
-      // distribution bin by bin.
+      // With radiation hazards the survival factor depends on τ, so walk the
+      // completion distribution bin by bin.
       let mass = 0;
       for (let tau = lo; tau < hi; tau += table.dt) {
         const step = Math.min(table.dt, hi - tau);
-        mass += (table.cdf(tau + step) - table.cdf(tau)) * survivesSterilization(cosmo, p, tf, tf + tau + step / 2);
+        mass += (table.cdf(tau + step) - table.cdf(tau)) * survivesRadiation(cosmo, p, tf, tau + step / 2);
       }
       out[c] += planets * cl.frac * cl.weight * mass;
     });
@@ -211,12 +236,12 @@ export function sampleOrigins(p: SimParams, cosmo: Cosmology, uni: Universe, tab
       if (T <= table.minDelay) continue;
       const tTech = tForm + table.sampleWithin(T, rng);
       if (tTech >= p.tEnd) continue;
-      if (rng() >= survivesSterilization(cosmo, p, tForm, tTech)) continue;
+      if (rng() >= survivesRadiation(cosmo, p, tForm, tTech - tForm)) continue;
       origins.push({ node: pickCumulative(cumMass, rng), tForm, tTech, starClass: c });
     }
   }
   origins.sort((a, b) => a.tTech - b.tTech);
   // Sterilization thins the sample after the fact, so recompute the expectation exactly.
-  if (p.sterilizeRate > 0) expected = emergenceByClass(p, cosmo, table, 0, p.tEnd).reduce((a, b) => a + b, 0) * boxMpc3;
+  if (hasRadiation(p)) expected =emergenceByClass(p, cosmo, table, 0, p.tEnd).reduce((a, b) => a + b, 0) * boxMpc3;
   return { origins, expected, saturated };
 }

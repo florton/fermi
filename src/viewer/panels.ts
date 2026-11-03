@@ -1,11 +1,12 @@
 /** The sidebar: run stats, the selected lineage, the busiest lineages, traits over time and the chronicle. */
 
+import { ARCHETYPES } from '../core/archetypes.ts';
 import { N_TRAITS, TRAITS } from '../core/genome.ts';
 import type { SimResult } from '../core/sim.ts';
 import type { Summary } from '../core/summary.ts';
 import { lightFront, lineageRgb, tierName, type Frame } from './state.ts';
 
-export const TRAIT_COLORS = ['#8ab4ff', '#ffd27a', '#ff6b6b', '#b48cff', '#6ee7a8', '#f5f5f5', '#ff9ad5'];
+export const TRAIT_COLORS = ['#8ab4ff', '#ffd27a', '#ff6b6b', '#b48cff', '#6ee7a8', '#f5f5f5', '#ff9ad5', '#ffb86b'];
 
 const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(1)}%` : '—');
 const gyr = (x: number) => (Number.isFinite(x) ? `${x.toFixed(2)} Gyr` : '—');
@@ -80,6 +81,8 @@ export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin
     <div class="stats">
       <span>Became technological</span><span>${gyr(c.tTech)}${born ? '' : ' (future)'}</span>
       <span>Home star</span><span>${r.params.starClasses[c.starClass].name}</span>
+      <span>Started as</span><span>${ARCHETYPES[c.archetype]?.label ?? c.archetype}</span>
+      <span>Alliance</span><span>${c.alliance === c.id ? (allianceSize(r, c.id) > 1 ? 'leads one' : 'none') : `with the ${r.civs[c.alliance].name}`}</span>
       <span>Saw at first light</span><span>${saw}</span>
       <span>Holdings visible to them then</span><span>${c.saw ? `${sightCount}${sightCount ? ' (orange lines)' : ''}` : '—'}</span>
       <span>Faster-than-light channel</span><span>${Number.isFinite(c.ftl) ? `from ${gyr(c.ftl)}` : 'no'}</span>
@@ -91,6 +94,30 @@ export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin
     </div>
     <h3>Traits <small>shaded: at origin · tick: mean of living holdings now</small></h3>
     ${bars}`;
+}
+
+function allianceSize(r: SimResult, root: number): number {
+  return r.civs.reduce((n, c) => n + (c.alliance === root ? 1 : 0), 0);
+}
+
+/** Share of held groups by the kind of civilisation each lineage started as. */
+export function renderKinds(el: HTMLElement, r: SimResult, frame: Frame) {
+  const byKind = new Map<string, number>();
+  let total = 0;
+  for (let i = 0; i < frame.held.length; i++) {
+    if (!frame.held[i]) continue;
+    const k = r.civs[i].archetype;
+    byKind.set(k, (byKind.get(k) ?? 0) + frame.held[i]);
+    total += frame.held[i];
+  }
+  if (total === 0 || (byKind.size === 1 && byKind.has('mixed'))) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = [...byKind]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `<span>${ARCHETYPES[k]?.label ?? k}</span><span>${((100 * n) / total).toFixed(0)}%</span>`)
+    .join('');
 }
 
 export function renderLineages(el: HTMLElement, r: SimResult, frame: Frame, selected: number) {
