@@ -68,7 +68,7 @@ and for the viewer's scenario picker.
 
 ```bash
 npm install
-npm run dev          # viewer at http://localhost:5173 (lo-fi map + 3D tab)
+npm run dev          # viewer at http://localhost:5173
 npm run check        # cosmology and hard-step math against known values
 npm run run          # one run: chronicle + summary
 npm run run -- --json --seed 3 --preemption 0.5
@@ -83,12 +83,26 @@ change that) and write a CSV to `out/`.
 
 ## Viewer
 
-The **Map** tab is the main view: a top-down tile map of a depth slice through the box.
-Drag to pan, scroll to zoom, hover for detail, and click a territory to select its lineage.
-A selected lineage shows how far the light of its first radio has travelled and its
-current sensor range. The **3D** tab is a point cloud of the same moment for the overall
-shape of things; drag to orbit. Chronicle entries and the lineage list are clickable.
-Space plays or pauses, and Esc clears the selection.
+The map fills the screen: a top-down tile view of a depth slice through the box, with
+lineage names on the larger territories. Panels float over it and can be hidden.
+
+- **Navigating:** drag to pan, scroll to zoom, and hover for detail.
+- **Selecting:** click a species marker (✶ first light, o stayed home) or a territory. The map then
+  shows how far the light of their first radio has travelled, their sensor range, and in orange
+  every holding they could actually see when they first looked up. Chronicle entries and the
+  lineage list are clickable too.
+- **Timeline:** the strip along the bottom shows the whole run. The grey area is the settled share,
+  ticks along the top mark first light (white for an empty sky, orange for seeing someone), red
+  bars mark strikes, and a marker shows today. Click or drag it to scrub.
+- **Layers:** turn territory, unsettled groups, species, strikes, labels and selection overlays on
+  or off, and set the tile size.
+- **Run and play:** the main button simulates once, then becomes Play/Pause for that universe.
+  It switches back to Run only after you change a setting. New seed simulates a fresh universe
+  with the same settings.
+- **Parameters:** start from a scenario, then edit anything. The `everything` scenario switches
+  on every hazard and mechanism at once.
+- **Keys:** Space plays or pauses, ←/→ steps, +/− and 0 zoom and fit, Tab hides the panels,
+  F goes full screen, and Esc clears the selection.
 
 ## Layout
 
@@ -100,7 +114,7 @@ Space plays or pauses, and Esc clears the selection.
 - `src/core/sim.ts`: the event loop, i.e. emergence, filters, expansion, war, strikes and observation
 - `src/core/summary.ts`: what a run measured
 - `src/cli/`: run, sweep (parallel), score, check
-- `src/viewer/`: the in-browser replay (`map2d.ts`, `view3d.ts`, `panels.ts`)
+- `src/viewer/`: the in-browser replay (`map2d.ts`, `timeline.ts`, `panels.ts`, `state.ts`)
 
 ## Scoring against our own sky
 

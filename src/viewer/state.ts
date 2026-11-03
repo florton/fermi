@@ -78,6 +78,41 @@ export function wrapDelta(a: number, b: number, L: number): number {
   return d;
 }
 
+/**
+ * The holdings a species could see when it first looked up, recomputed with the
+ * simulation's own rules: light that left each node at the right time, from
+ * whoever held it then, bright enough after redshift to reach a present-day-class
+ * sensor. Inside half the box only, like the simulation's exact part.
+ */
+export function whatSaw(r: SimResult, civId: number): { node: number; lineage: number }[] {
+  const c = r.civs[civId];
+  if (!c.saw) return [];
+  const t = c.tTech;
+  const { x, y, z, mass } = r.positions;
+  const L = r.params.boxGly;
+  const intra = (r.params.intraNodeSeeing * L) / Math.cbrt(x.length);
+  const pol = r.polities;
+  const out: { node: number; lineage: number }[] = [];
+  const a0 = cosmo.a(t);
+  for (let k = 0; k < pol.node.length; k++) {
+    if (pol.born[k] >= t) continue;
+    const node = pol.node[k];
+    const dx = wrapDelta(x[c.node], x[node], L);
+    const dy = wrapDelta(y[c.node], y[node], L);
+    const dz = wrapDelta(z[c.node], z[node], L);
+    const d = Math.max(Math.hypot(dx, dy, dz), node === c.node ? intra : 0);
+    if (d > L / 2) continue;
+    const te = cosmo.emission(t, d);
+    if (te < pol.born[k] || te >= pol.died[k]) continue;
+    const lin = pol.lineage[k];
+    const g = pol.genome.subarray(k * N_TRAITS, (k + 1) * N_TRAITS);
+    const floor = r.params.ftlCloak > 0 && r.civs[lin].ftl <= te ? 0 : r.params.stealthFloor;
+    const lum = luminosity(tierAt(r.civs[lin].tierTimes, te), te - pol.born[k], r.params.conversionTime, visibility(g, floor), mass[node]);
+    if (lum > 0 && d * (a0 / cosmo.a(te)) <= r.params.detectRange * Math.sqrt(lum)) out.push({ node, lineage: lin });
+  }
+  return out;
+}
+
 /** Comoving radius the light of an event at tEvent has reached by t. */
 export function lightFront(tEvent: number, t: number): number {
   return t <= tEvent ? 0 : cosmo.D(t) - cosmo.D(tEvent);

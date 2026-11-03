@@ -34,9 +34,11 @@ export function renderStats(el: HTMLElement, r: SimResult, s: Summary, t: number
   el.innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
 }
 
-export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin: number) {
+export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin: number, sightCount: number) {
   if (lin < 0) {
-    el.innerHTML = '<p class="muted">Click a territory on the map, a lineage below or a chronicle entry.</p>';
+    el.innerHTML =
+      '<p class="muted">Click a territory or a ✶ / o species marker on the map, a lineage below, or a chronicle entry. ' +
+      'The map then shows how far their first light has travelled and what they could see when they looked up.</p>';
     return;
   }
   const c = r.civs[lin];
@@ -74,11 +76,13 @@ export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin
     }</div></div>`;
   }).join('');
   el.innerHTML = `
-    <div class="insp-head">${swatch(lin)}<b>${c.name}</b><button id="clear-sel" title="Clear selection">×</button></div>
+    <div class="insp-head">${swatch(lin)}<b>${c.name}</b><button id="focus-sel" title="Centre the map on their home">Go to</button><button id="clear-sel" title="Clear selection (Esc)">×</button></div>
     <div class="stats">
       <span>Became technological</span><span>${gyr(c.tTech)}${born ? '' : ' (future)'}</span>
       <span>Home star</span><span>${r.params.starClasses[c.starClass].name}</span>
       <span>Saw at first light</span><span>${saw}</span>
+      <span>Holdings visible to them then</span><span>${c.saw ? `${sightCount}${sightCount ? ' (orange lines)' : ''}` : '—'}</span>
+      <span>Faster-than-light channel</span><span>${Number.isFinite(c.ftl) ? `from ${gyr(c.ftl)}` : 'no'}</span>
       <span>Fate</span><span>${c.fate}</span>
       <span>Groups held now · peak</span><span>${frame.held[lin]} · ${c.peak}</span>
       <span>Technology now</span><span>${tierName(r, lin, t)}</span>

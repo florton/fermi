@@ -7,57 +7,76 @@
     <link rel="stylesheet" href="/src/viewer/style.css" />
   </head>
   <body>
-    <main>
-      <section class="stage">
-        <div class="toolbar">
-          <div class="tabs" role="tablist">
-            <button id="tab-map" class="on" role="tab">Map</button>
-            <button id="tab-3d" role="tab">3D</button>
-          </div>
-          <label>Depth slice <input id="slice-c" type="range" min="0" max="1" step="0.01" value="0.5" /></label>
-          <label>Thickness <input id="slice-w" type="range" min="0.05" max="1" step="0.01" value="1" /></label>
-          <button id="recenter" title="Reset view">Reset view</button>
-          <span class="key">· empty &nbsp;■ held (bigger, brighter = more waste heat) &nbsp;✶ first light &nbsp;o stayed home &nbsp;x strike</span>
-        </div>
-        <div class="views">
-          <canvas id="map"></canvas>
-          <canvas id="gl" hidden></canvas>
-          <div class="overlay" id="overlay">Run a universe to begin.</div>
-          <div class="tip" id="tip" hidden></div>
-        </div>
-        <div class="timebar">
-          <button id="play" disabled>Play</button>
-          <select id="speed" title="Playback speed">
-            <option value="0.25">0.25 Gyr/s</option>
-            <option value="1" selected>1 Gyr/s</option>
-            <option value="4">4 Gyr/s</option>
-          </select>
-          <input id="time" type="range" min="0" max="40" step="0.01" value="0" disabled />
-          <button id="now" disabled title="Jump to the present day">Now</button>
-          <span id="tlabel">0.00 Gyr</span>
-        </div>
-      </section>
-      <aside>
-        <h1>Fermi</h1>
-        <p class="sub">A scaled-down sample of the universe. Each cell is a handful of galaxy groups; colour is the lineage holding them.</p>
-        <details id="params-box" open>
-          <summary>Parameters</summary>
-          <form id="params"></form>
-        </details>
-        <button id="run" class="primary">Run universe</button>
-        <h2>Selected lineage</h2>
+    <canvas id="map"></canvas>
+    <div class="overlay" id="overlay">Pick a scenario and run a universe.</div>
+    <div class="tip" id="tip" hidden></div>
+
+    <header class="topbar" id="top-bar">
+      <b class="brand">Fermi</b>
+      <select id="scenario" title="Scenario"></select>
+      <button id="run" class="primary" title="Simulate, then play / pause (Space)">Run</button>
+      <button id="new-seed" hidden title="Simulate a fresh universe with the next seed">New seed</button>
+      <button id="open-params" title="All parameters">Parameters</button>
+      <span class="sep"></span>
+      <div class="menu">
+        <button id="layers-btn" title="Choose what the map shows">Layers</button>
+        <div class="popover" id="layers" hidden></div>
+      </div>
+      <label class="slice" title="Which slab of the box to show">Depth <input id="slice-c" type="range" min="0" max="1" step="0.01" value="0.5" /></label>
+      <label class="slice" title="How thick a slab; full shows the whole box flattened">Thickness <input id="slice-w" type="range" min="0.05" max="1" step="0.01" value="1" /></label>
+      <span class="sep"></span>
+      <button id="recenter" title="Fit the box to the screen (0)">Fit</button>
+      <button id="toggle-panels" title="Hide or show panels (Tab)">Panels</button>
+      <button id="fullscreen" title="Full screen (F)">⛶</button>
+    </header>
+
+    <aside class="panel left" id="left">
+      <section>
+        <h2>Selected</h2>
         <div id="inspector"></div>
+      </section>
+      <section>
         <h2>Largest lineages now</h2>
         <ol id="lineages" class="lineages"></ol>
+      </section>
+    </aside>
+
+    <aside class="panel right" id="right">
+      <section>
         <h2>Run</h2>
         <div id="stats" class="stats"></div>
+      </section>
+      <section>
         <h2>Mean traits of living holdings</h2>
-        <canvas id="traits" height="140"></canvas>
+        <canvas id="traits" height="120"></canvas>
         <div id="legend" class="legend"></div>
+      </section>
+      <section class="grow">
         <h2>Chronicle</h2>
         <ol id="chronicle" class="chronicle"></ol>
-      </aside>
-    </main>
+      </section>
+    </aside>
+
+    <footer class="timebar" id="time-bar">
+      <select id="speed" title="Playback speed">
+        <option value="0.25">0.25 Gyr/s</option>
+        <option value="1" selected>1 Gyr/s</option>
+        <option value="4">4 Gyr/s</option>
+      </select>
+      <button id="now" disabled title="Jump to today">Today</button>
+      <canvas id="timeline"></canvas>
+      <span id="tlabel">0.00 Gyr</span>
+    </footer>
+
+    <dialog id="params-dialog">
+      <form method="dialog">
+        <h2>Parameters</h2>
+        <p class="muted">Start from a scenario, then change anything. Run applies them.</p>
+        <div id="params" class="params"></div>
+        <menu><button value="close">Close</button></menu>
+      </form>
+    </dialog>
+
     <script type="module" src="/src/viewer/main.ts"></script>
   </body>
 </html>

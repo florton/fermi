@@ -10,7 +10,7 @@
  * optional strategy and learned response removed.
  */
 
-import type { SimParams } from './params.ts';
+import { withHardStepRate, type SimParams } from './params.ts';
 
 export const SCENARIOS: Record<string, Partial<SimParams>> = {
   baseline: {},
@@ -24,6 +24,22 @@ export const SCENARIOS: Record<string, Partial<SimParams>> = {
   telepathy: { ftlChance: 0.3 },
   // The same channel, able to carry waste heat away too: "already here, hidden" becomes possible.
   cloakedChannel: { ftlChance: 0.3, ftlCloak: 1 },
+  // Every nature-fact above at once. Sterilization removes ~99% of origins, so
+  // this runs with commoner life than the default to leave something to watch.
+  everything: {
+    tierHazard: 0.5,
+    sterilizeRate: 1,
+    strikeRadius: 0.3,
+    strikesPerScan: 20,
+    scanInterval: 0.2,
+    stealthCost: 0.5,
+    stealthFloor: 0.01,
+    berserkerChance: 0.3,
+    growthCollapse: 3,
+    ftlChance: 0.3,
+    ftlCloak: 1,
+    hardSteps: withHardStepRate({}, -4.8).hardSteps,
+  },
 };
 
 export function scenario(name: string): Partial<SimParams> {
