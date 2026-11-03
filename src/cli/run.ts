@@ -7,7 +7,7 @@
  * Any scalar field of SimParams can be overridden as --name value.
  */
 
-import { withDefaults, type SimParams } from '../core/params.ts';
+import { withDefaults, withHardStepRate, type SimParams } from '../core/params.ts';
 import { runSim } from '../core/sim.ts';
 import { summarize } from '../core/summary.ts';
 
@@ -26,7 +26,10 @@ export function parseOverrides(argv: string[]): { over: Partial<SimParams>; flag
     over[key] = Number(next);
     i++;
   }
-  return { over: over as Partial<SimParams>, flags };
+  // The shorthand isn't a SimParams field; expand it into the hard-step rates.
+  const { hardStepLog10, ...rest } = over;
+  const params = hardStepLog10 === undefined ? rest : withHardStepRate(rest, hardStepLog10);
+  return { over: params as Partial<SimParams>, flags };
 }
 
 if (import.meta.main) {

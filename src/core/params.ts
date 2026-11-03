@@ -87,8 +87,58 @@ export interface SimParams {
   defenderAdvantage: number;
   /** Chance a native civ is prevented from arising in a node someone else already holds. */
   preemption: number;
-  /** Distance at which a fully unhidden, average-mass settled node is detectable, comoving Gly. */
+  /**
+   * Distance at which a fully converted, unhidden, average-mass node is detectable
+   * by a present-day-human-class sensor, Gly. Scales as √luminosity, and is
+   * stretched by (1+z) for light from the past.
+   */
   detectRange: number;
+  /**
+   * 1 to estimate what observers see beyond half the box from the box's own
+   * luminosity census (assuming the box is a fair sample), 0 to see only inside it.
+   */
+  farField: number;
+  /** Fraction of waste heat still visible at full stealth. 0.1 = stealth can dim 10×, not hide. */
+  stealthFloor: number;
+  /**
+   * How much stealth costs: it weakens a polity in a fight and slows its launches.
+   * 1 is the default trade-off, 0 makes hiding free.
+   */
+  stealthCost: number;
+
+  // ── Technology ───────────────────────────────────────────────────────────
+  /** Mean time between rungs of the tech ladder, Gyr. Caution stretches it. */
+  techStep: number;
+  /** Time to build a newly held node out to its tier's full conversion, Gyr. */
+  conversionTime: number;
+
+  // ── Dark forest ──────────────────────────────────────────────────────────
+  /** How often a strike-capable lineage looks for targets, Gyr. */
+  scanInterval: number;
+  /** Most targets one scan strikes. */
+  strikesPerScan: number;
+  /** Relativistic strike speed, fraction of c. */
+  strikeSpeed: number;
+  /** Chance a strike destroys the polity it reaches. */
+  strikeKill: number;
+  /** Chance the victim's lineage traces a strike back and can retaliate. */
+  strikeReveal: number;
+  /** A struck node can't be resettled for this long, Gyr. */
+  sterileTime: number;
+  /** Weight of a lineage's size in conflict: power × (1 + w·log₁₀ nodes held). */
+  lineageStrength: number;
+
+  // ── Origins ──────────────────────────────────────────────────────────────
+  /**
+   * How much seeing others at first light pushes a young civ toward stealth
+   * and caution. A hypothesis knob, not a finding: 0 makes traits independent of the sky.
+   */
+  skyResponse: number;
+  /**
+   * How much a resource-rich home (heavy node) pushes toward expansionism.
+   * Also a hypothesis knob.
+   */
+  homeRichness: number;
 
   // ── Output ───────────────────────────────────────────────────────────────
   /** Interval between time-series samples, Gyr. */
@@ -139,6 +189,23 @@ export const DEFAULTS: SimParams = {
   defenderAdvantage: 3,
   preemption: 1,
   detectRange: 1.5,
+  farField: 1,
+  stealthFloor: 0.1,
+  stealthCost: 1,
+
+  techStep: 0.4,
+  conversionTime: 0.2,
+
+  scanInterval: 0.5,
+  strikesPerScan: 2,
+  strikeSpeed: 0.95,
+  strikeKill: 0.8,
+  strikeReveal: 0.5,
+  sterileTime: 0.5,
+  lineageStrength: 1,
+
+  skyResponse: 0.3,
+  homeRichness: 0.15,
 
   sampleEvery: 0.25,
   maxChronicle: 400,

@@ -10,6 +10,7 @@
  *                 cost:    polities collapse faster; provokes retaliation
  *   stealth       benefit: less visible, less often attacked
  *                 cost:    hides its own energy use, so weaker in a fight and slower to launch
+ *                          (scaled by params.stealthCost)
  *   caution       benefit: survives its technological adolescence more often
  *                 cost:    slower to become spacefaring, slower to launch
  *
@@ -49,12 +50,17 @@ export function genomeDistance(a: Genome, b: Genome): number {
   return Math.sqrt(s / N_TRAITS);
 }
 
-/** Strength in a contested node. */
-export function power(g: Genome): number {
-  return (1 - 0.6 * g[STEALTH]) * (0.5 + g[AGGRESSION]);
+/** Strength in a contested node. `stealthCost` scales how much hiding weakens it (1 = default, 0 = free). */
+export function power(g: Genome, stealthCost: number): number {
+  return (1 - 0.6 * stealthCost * g[STEALTH]) * (0.5 + g[AGGRESSION]);
 }
 
-/** Fraction of a settled node's waste heat that shows. */
-export function visibility(g: Genome): number {
-  return 1 - 0.9 * g[STEALTH];
+/**
+ * Fraction of a settled node's waste heat that shows. `floor` is what still
+ * leaks out at full stealth — thermodynamics says heat has to go somewhere, and
+ * how well it can be hidden (radiated cold, beamed away, dumped into the
+ * microwave background) is an open question, so it's a parameter.
+ */
+export function visibility(g: Genome, floor: number): number {
+  return 1 - (1 - floor) * g[STEALTH];
 }

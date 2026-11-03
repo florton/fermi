@@ -1,31 +1,36 @@
 /**
  * A parameter sweep: the experiment. Every combination of the --vary lists, each
- * run with several seeds, one CSV row per run.
+ * run with several seeds, one CSV row per run, spread across CPU cores.
  *
  *   npm run sweep -- --vary speedMax=0.1,0.5,0.9 --vary filterSurvival=0.1,0.5 --seeds 5
- *   npm run sweep -- --vary hardStepLog10=-4.4,-4.8,-5.2 --seeds 8 --nodes 20000
+ *   npm run sweep -- --vary hardStepLog10=-4.4,-4.8,-5.2 --seeds 8 --nodes 20000 --jobs 6
  *
  * `hardStepLog10` is a shorthand that sets the rate of every hard step whose
  * default rate is below 1 per Gyr. Other fixed overrides pass through as in run.ts.
+ * --jobs defaults to one fewer than the number of cores.
  * Output goes to out/sweep-<timestamp>.csv.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { withDefaults, withHardStepRate, type SimParams } from '../core/params.ts';
-import { runSim } from '../core/sim.ts';
-import { summarize, type Summary } from '../core/summary.ts';
+import { availableParallelism } from 'node:os';
+import { Worker } from 'node:worker_threads';
+import { withHardStepRate, type SimParams } from '../core/params.ts';
+import type { Summary } from '../core/summary.ts';
 import { parseOverrides } from './run.ts';
 
 const argv = process.argv.slice(2);
 const vary: [string, number[]][] = [];
 const rest: string[] = [];
 let seeds = 3;
+let jobs = Math.max(1, availableParallelism() - 1);
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--vary') {
     const [key, list] = argv[++i].split('=');
     vary.push([key, list.split(',').map(Number)]);
   } else if (argv[i] === '--seeds') {
     seeds = Number(argv[++i]);
+  } else if (argv[i] === '--jobs') {
+    jobs = Number(argv[++i]);
   } else rest.push(argv[i]);
 }
 const { over: fixed } = parseOverrides(rest);
@@ -39,6 +44,9 @@ let combos: { label: Record<string, number>; over: Partial<SimParams> }[] = [{ l
 for (const [key, values] of vary) {
   combos = combos.flatMap((c) => values.map((v) => ({ label: { ...c.label, [key]: v }, over: apply(c.over, key, v) })));
 }
+const tasks = combos.flatMap((combo) =>
+  Array.from({ length: seeds }, (_, s) => ({ label: combo.label, over: { ...combo.over, seed: s + 1 } })),
+);
 
 const flat = (s: Summary): Record<string, number | string | boolean> => {
   const { fates, finalTraits, tally, ...scalars } = s;
@@ -49,25 +57,42 @@ const flat = (s: Summary): Record<string, number | string | boolean> => {
   return out;
 };
 
-const rows: Record<string, number | string | boolean>[] = [];
-const total = combos.length * seeds;
+const rows: Record<string, number | string | boolean>[] = new Array(tasks.length);
+let next = 0;
 let done = 0;
-for (const combo of combos) {
-  for (let s = 1; s <= seeds; s++) {
-    const summary = summarize(runSim(withDefaults({ ...combo.over, seed: s })));
-    rows.push({ ...combo.label, ...flat(summary) });
-    done++;
-    const label = Object.entries(combo.label).map(([k, v]) => `${k}=${v}`).join(' ');
-    console.log(
-      `[${done}/${total}] ${label} seed=${s}  origins=${summary.origins} silent=${summary.silentFrac} ` +
-        `presentSilent=${summary.presentSilentFrac} settledNow=${summary.settledAtPresent} (${summary.runtimeMs} ms)`,
-    );
+const started = Date.now();
+const workers = Array.from({ length: Math.min(jobs, tasks.length) }, () => new Worker(new URL('./sweep-worker.ts', import.meta.url)));
+console.log(`${tasks.length} runs on ${workers.length} workers`);
+
+await new Promise<void>((resolve) => {
+  const feed = (w: Worker) => {
+    if (next >= tasks.length) {
+      w.terminate();
+      return;
+    }
+    const id = next++;
+    w.postMessage({ id, over: tasks[id].over });
+  };
+  for (const w of workers) {
+    w.on('message', ({ id, summary }: { id: number; summary: Summary }) => {
+      const task = tasks[id];
+      rows[id] = { ...task.label, ...flat(summary) };
+      done++;
+      const label = Object.entries(task.label).map(([k, v]) => `${k}=${v}`).join(' ');
+      console.log(
+        `[${done}/${tasks.length}] ${label} seed=${summary.seed}  origins=${summary.origins} silent=${summary.silentFrac} ` +
+          `presentSilent=${summary.presentSilentFrac} settledNow=${summary.settledAtPresent} (${summary.runtimeMs} ms)`,
+      );
+      if (done === tasks.length) resolve();
+      feed(w);
+    });
+    feed(w);
   }
-}
+});
 
 const cols = Object.keys(rows[0]);
 const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => String(r[c])).join(','))].join('\n');
 mkdirSync('out', { recursive: true });
 const path = `out/sweep-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
 writeFileSync(path, csv);
-console.log(`wrote ${path}`);
+console.log(`wrote ${path} in ${((Date.now() - started) / 1000).toFixed(0)} s`);

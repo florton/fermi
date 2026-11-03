@@ -1,17 +1,24 @@
 /**
  * The run: technological species arise on the schedule biology.ts drew for them,
  * look at the sky, survive or don't, and the ones that expand settle node after
- * node, carrying a mutating genome with them, until the run ends or the
- * expansion of the universe puts everything else out of reach.
+ * node, climbing the tech ladder and carrying a mutating genome with them, until
+ * the run ends or the expansion of the universe puts everything else out of reach.
  *
  * Vocabulary:
  *   civ      one technological origin — a species and the lineage it founds
  *   polity   one lineage's hold on one node, from settlement to collapse or conquest
  *   observer a civ at the moment it becomes technological, looking at its past light cone
+ *   strike   a relativistic kinetic weapon fired at a node someone could see
  *
- * The experiment is the observers. Each one records which other lineages it can
- * see, the way we look at our own sky, and later whether and when someone
- * arrives. "Silent" means it saw nobody.
+ * Seeing has consequences. A lineage with strike capability periodically looks
+ * at its own sky and, if aggressive, fires at what it finds; a strike can be
+ * traced back. That is the dark-forest hypothesis made into a mechanism, so
+ * whether hiding pays is something the run decides rather than something assumed.
+ *
+ * The experiment is still the observers. Each one records which lineages it can
+ * see inside the box, and — beyond half the box, where the box can't be
+ * simulated directly — how many it would expect to see if the rest of the
+ * universe looks like this sample. "Silent" means it saw nobody either way.
  */
 
 import { buildStepTable, sampleOrigins } from './biology.ts';
@@ -34,6 +41,7 @@ import { EventQueue } from './heap.ts';
 import { lineageName } from './names.ts';
 import type { SimParams } from './params.ts';
 import { exponential, mulberry32 } from './rng.ts';
+import { STRIKE_TIER, TIERS, luminosity, tierAt } from './tech.ts';
 import { makeUniverse, type Universe } from './universe.ts';
 
 export const FATES = ['pending', 'preempted', 'filtered', 'quiet', 'expanding', 'destroyed', 'engulfed'] as const;
@@ -50,17 +58,29 @@ export interface Civ {
   fate: Fate;
   tFate: number;
   /** Set if the civ got to look at the sky (not preempted). */
-  saw: { lineages: number; nearest: number } | null;
+  saw: {
+    /** Distinct lineages seen inside half the box. */
+    lineages: number;
+    nearest: number;
+    /** Expected number of visible nodes beyond half the box, from the census. */
+    farExpected: number;
+    /** Whether that expectation came up as a sighting. */
+    far: boolean;
+  } | null;
   /** When a foreign lineage first settled this civ's home node, if ever. */
   tEngulfed: number;
   /** Most nodes the lineage held at once. */
   peak: number;
+  /** When the lineage reached each tier of the tech ladder. Empty unless it expanded. */
+  tierTimes: number[];
 }
 
 export interface ChronicleEntry {
   t: number;
-  kind: 'origin' | 'filter' | 'expand' | 'contact' | 'war' | 'extinct' | 'milestone' | 'zoo' | 'epoch';
+  kind: 'origin' | 'filter' | 'expand' | 'contact' | 'war' | 'extinct' | 'milestone' | 'zoo' | 'epoch' | 'tech' | 'strike';
   text: string;
+  /** The lineage the entry is about, or -1. */
+  who: number;
 }
 
 export interface Sample {
@@ -69,11 +89,13 @@ export interface Sample {
   settled: number;
   lineagesAlive: number;
   quietAlive: number;
-  /** Mean genome over living polities. */
+  /** Mean genome over living polities, NaN when there are none. */
   meanGenome: number[];
   /** Observers so far, and how many of them saw nothing. */
   observers: number;
   silent: number;
+  /** Strikes fired so far. */
+  strikes: number;
 }
 
 export interface Polities {
@@ -86,6 +108,29 @@ export interface Polities {
   genome: Float32Array;
 }
 
+export interface Strikes {
+  from: Int32Array;
+  to: Int32Array;
+  lineage: Int32Array;
+  /** Lineage the strike was aimed at. */
+  victim: Int32Array;
+  launched: Float32Array;
+  arrived: Float32Array;
+  /** 1 if it destroyed what it was aimed at. */
+  hit: Uint8Array;
+}
+
+export interface Tally {
+  launches: number;
+  settlements: number;
+  conquests: number;
+  repelled: number;
+  collapses: number;
+  strikes: number;
+  strikeKills: number;
+  retaliations: number;
+}
+
 export interface SimResult {
   params: SimParams;
   universe: { nodes: number; boxGly: number; galaxiesPerNode: number; scaleToObservable: number };
@@ -94,6 +139,7 @@ export interface SimResult {
   saturated: boolean;
   civs: Civ[];
   polities: Polities;
+  strikes: Strikes;
   series: Sample[];
   chronicle: ChronicleEntry[];
   positions: { x: Float32Array; y: Float32Array; z: Float32Array; mass: Float32Array };
@@ -101,7 +147,7 @@ export interface SimResult {
   events: number;
   /** Hit params.maxEvents and stopped early. */
   truncated: boolean;
-  tally: { launches: number; settlements: number; conquests: number; repelled: number; collapses: number };
+  tally: Tally;
 }
 
 const EMERGE = 0;
@@ -110,6 +156,14 @@ const ARRIVE = 2;
 const COLLAPSE = 3;
 const SAMPLE = 4;
 const EPOCH = 5;
+const TIER = 6;
+const SCAN = 7;
+const STRIKE = 8;
+
+// Luminosity census bins for the far field: detection range at sensor 1, log-spaced.
+const CENSUS_BINS = 64;
+const CENSUS_MIN = 0.01;
+const CENSUS_PER_DECADE = 16;
 
 export function runSim(p: SimParams): SimResult {
   const started = performance.now();
@@ -119,6 +173,8 @@ export function runSim(p: SimParams): SimResult {
   const maxWindow = Math.max(...p.starClasses.map((c) => c.window));
   const table = buildStepTable(p, Math.min(maxWindow, p.tEnd) + 1);
   const sample = sampleOrigins(p, cosmo, uni, table, rng);
+  const halfBox = uni.L / 2;
+  const boxVolume = uni.L ** 3;
 
   const civs: Civ[] = sample.origins.map((o, id) => ({
     id,
@@ -133,6 +189,7 @@ export function runSim(p: SimParams): SimResult {
     saw: null,
     tEngulfed: NaN,
     peak: 0,
+    tierTimes: [],
   }));
   const civsAt = new Map<number, number[]>();
   for (const c of civs) {
@@ -148,45 +205,83 @@ export function runSim(p: SimParams): SimResult {
   const pBorn: number[] = [];
   const pDied: number[] = [];
   const pGenome: Genome[] = [];
-  const pRange: number[] = [];
+  const pVis: number[] = [];
   // Each node's polities as a linked list, newest first, and the nodes that have ever had one.
   const pPrevAtNode: number[] = [];
   const nodeHead = new Int32Array(uni.n).fill(-1);
   const everSettled: number[] = [];
+  // Living polities per lineage, as swap-remove arrays so a random member is O(1).
+  const members: number[][] = civs.map(() => []);
+  const memberPos: number[] = [];
   // A polity launches toward a given target at most once. Without this, every
   // conquest re-launches at every neighbour and wars cascade without bound.
   const launched = new Set<number>();
+  const sterileUntil = new Float32Array(uni.n);
+
+  const sFrom: number[] = [];
+  const sTo: number[] = [];
+  const sLineage: number[] = [];
+  const sTarget: number[] = [];
+  const sVictim: number[] = [];
+  const sLaunched: number[] = [];
+  const sArrived: number[] = [];
+  const sHit: number[] = [];
+  const sRetaliation: boolean[] = [];
 
   const owner = new Int32Array(uni.n).fill(-1);
   const residents = new Map<number, number[]>();
-  const lineageAlive = new Int32Array(civs.length);
   let settledCount = 0;
   let lineagesAlive = 0;
   let quietAlive = 0;
   let observers = 0;
   let silent = 0;
+  const census: Float32Array[] = [];
+  let brightestBin = -1;
 
   const series: Sample[] = [];
   const chronicle: ChronicleEntry[] = [];
   const kindCount = new Map<string, number>();
-  const log = (t: number, kind: ChronicleEntry['kind'], text: string, cap = Infinity) => {
+  const log = (t: number, kind: ChronicleEntry['kind'], text: string, cap = Infinity, who = -1) => {
     const n = kindCount.get(kind) ?? 0;
     if (n >= cap || chronicle.length >= p.maxChronicle) return;
     kindCount.set(kind, n + 1);
-    chronicle.push({ t, kind, text });
+    chronicle.push({ t, kind, text, who });
   };
   const contacts = new Set<number>();
+  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0 };
 
   const q = new EventQueue();
   for (const c of civs) q.push(c.tTech, EMERGE, c.id);
-  for (let t = 0; t <= p.tEnd; t += p.sampleEvery) q.push(t, SAMPLE);
+  for (let i = 0; i * p.sampleEvery <= p.tEnd; i++) q.push(i * p.sampleEvery, SAMPLE);
   if (cosmo.age < p.tEnd) q.push(cosmo.age, EPOCH);
 
-  const speedOf = (g: Genome) => p.speedMin + (p.speedMax - p.speedMin) * g[SPEED];
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const tierOf = (lineage: number, t: number) => tierAt(civs[lineage].tierTimes, t);
+  const speedOf = (k: number, t: number) =>
+    (p.speedMin + (p.speedMax - p.speedMin) * pGenome[k][SPEED]) * TIERS[Math.max(0, tierOf(pLineage[k], t))].speed;
   const isKin = (a: number, b: number) =>
     pLineage[a] === pLineage[b] && genomeDistance(pGenome[a], pGenome[b]) < p.kinThreshold;
+  const strength = (k: number, t: number) =>
+    power(pGenome[k], p.stealthCost) *
+    TIERS[Math.max(0, tierOf(pLineage[k], t))].power *
+    (1 + p.lineageStrength * Math.log10(Math.max(1, members[pLineage[k]].length)));
 
-  const launch = (from: number, target: number, t: number) => {
+  /** Waste heat of polity k's node as emitted at time te. */
+  const lumAt = (k: number, te: number) =>
+    luminosity(tierOf(pLineage[k], te), te - pBorn[k], p.conversionTime, pVis[k], uni.mass[pNode[k]]);
+  /** Can light emitted at te from distance d be seen at tObs with this sensor? */
+  const detectable = (d: number, te: number, tObs: number, lum: number, sensor: number) =>
+    lum > 0 && d * (cosmo.a(tObs) / cosmo.a(te)) <= p.detectRange * sensor * Math.sqrt(lum);
+  /** Who held `node` at time te, or -1. */
+  const holderAt = (node: number, te: number) => {
+    for (let k = nodeHead[node]; k >= 0; k = pPrevAtNode[k]) {
+      if (pBorn[k] > te) continue;
+      return te < pDied[k] ? k : -1;
+    }
+    return -1;
+  };
+
+  const launch = (from: number, target: number, t: number, notBefore = t) => {
     const key = from * uni.n + target;
     if (launched.has(key)) return;
     launched.add(key);
@@ -195,10 +290,10 @@ export function runSim(p: SimParams): SimResult {
     // Only the aggressive bother sending anything at a held node; a peaceful probe would just turn back.
     if (held && rng() >= g[AGGRESSION]) return;
     const meanDelay =
-      (p.launchDelay * (1 + g[CAUTION]) * (1 + g[STEALTH]) * (1 + 2 * g[SPEED] * g[SPEED])) /
+      (p.launchDelay * (1 + g[CAUTION]) * (1 + p.stealthCost * g[STEALTH]) * (1 + 2 * g[SPEED] * g[SPEED])) /
       (0.2 + g[EXPANSIONISM]);
-    const tl = t + exponential(rng, 1 / meanDelay) + (held ? exponential(rng, 1 / p.siegeDelay) : 0);
-    const ta = cosmo.arrival(tl, uni.dist(pNode[from], target), speedOf(g));
+    const tl = Math.max(t, notBefore) + exponential(rng, 1 / meanDelay) + (held ? exponential(rng, 1 / p.siegeDelay) : 0);
+    const ta = cosmo.arrival(tl, uni.dist(pNode[from], target), speedOf(from, tl));
     if (ta < p.tEnd) {
       q.push(ta, ARRIVE, from, target);
       tally.launches++;
@@ -213,18 +308,21 @@ export function runSim(p: SimParams): SimResult {
     pBorn.push(t);
     pDied.push(Infinity);
     pGenome.push(genome);
-    pRange.push(p.detectRange * Math.sqrt(visibility(genome) * uni.mass[node]));
+    pVis.push(visibility(genome, p.stealthFloor));
     if (nodeHead[node] === -1) everSettled.push(node);
     pPrevAtNode.push(nodeHead[node]);
     nodeHead[node] = id;
     owner[node] = id;
     settledCount++;
-    if (lineageAlive[lineage]++ === 0) lineagesAlive++;
+    const m = members[lineage];
+    if (m.length === 0) lineagesAlive++;
+    memberPos[id] = m.length;
+    m.push(id);
     const civ = civs[lineage];
-    if (lineageAlive[lineage] > civ.peak) {
-      civ.peak = lineageAlive[lineage];
+    if (m.length > civ.peak) {
+      civ.peak = m.length;
       if (civ.peak === 10 || civ.peak === 100 || civ.peak === 1000 || civ.peak === 10000)
-        log(t, 'milestone', `The ${civ.name} hold ${civ.peak} galaxy groups.`);
+        log(t, 'milestone', `The ${civ.name} hold ${civ.peak} galaxy groups.`, Infinity, lineage);
     }
 
     const here = civsAt.get(node);
@@ -238,7 +336,7 @@ export function runSim(p: SimParams): SimResult {
     for (const j of uni.neighbors(node)) {
       const o = owner[j];
       if (o >= 0 && isKin(id, o)) continue;
-      launch(id, j, t);
+      launch(id, j, t, sterileUntil[j]);
     }
 
     // Anyone already living here quietly now lives inside someone's territory.
@@ -252,9 +350,9 @@ export function runSim(p: SimParams): SimResult {
           c.tFate = t;
           res.splice(k, 1);
           quietAlive--;
-          log(t, 'war', `The ${civ.name} reach the ${c.name}' home and wipe them out.`, 40);
+          log(t, 'war', `The ${civ.name} reach the ${c.name}' home and wipe them out.`, 40, lineage);
         } else {
-          log(t, 'zoo', `The ${civ.name} find the ${c.name} and leave them be.`, 30);
+          log(t, 'zoo', `The ${civ.name} find the ${c.name} and leave them be.`, 30, lineage);
         }
       }
     }
@@ -267,15 +365,21 @@ export function runSim(p: SimParams): SimResult {
     owner[node] = -1;
     settledCount--;
     const lineage = pLineage[id];
-    if (--lineageAlive[lineage] === 0) {
+    const m = members[lineage];
+    const last = m.pop()!;
+    if (last !== id) {
+      m[memberPos[id]] = last;
+      memberPos[last] = memberPos[id];
+    }
+    if (m.length === 0) {
       lineagesAlive--;
       const c = civs[lineage];
-      if (c.peak >= 5) log(t, 'extinct', `The last of the ${c.name} falls. At their height they held ${c.peak} groups.`, 80);
+      if (c.peak >= 5) log(t, 'extinct', `The last of the ${c.name} falls. At their height they held ${c.peak} groups.`, 80, lineage);
     }
-    // The vacancy is an opportunity for whoever is next door.
+    // The vacancy is an opportunity for whoever is next door, once it can be lived in.
     for (const j of uni.neighbors(node)) {
       const o = owner[j];
-      if (o >= 0) launch(o, node, t);
+      if (o >= 0) launch(o, node, t, sterileUntil[node]);
     }
   };
 
@@ -283,7 +387,47 @@ export function runSim(p: SimParams): SimResult {
     const key = Math.min(la, lb) * 1_000_003 + Math.max(la, lb);
     if (contacts.has(key)) return;
     contacts.add(key);
-    log(t, 'contact', `First contact: the ${civs[la].name} and the ${civs[lb].name}.`, 80);
+    log(t, 'contact', `First contact: the ${civs[la].name} and the ${civs[lb].name}.`, 80, la);
+  };
+
+  const fireStrike = (from: number, targetPolity: number, t: number, retaliation: boolean) => {
+    const to = pNode[targetPolity];
+    const ta = cosmo.arrival(t, uni.dist(pNode[from], to), p.strikeSpeed);
+    if (!(ta < p.tEnd)) return;
+    const idx = sFrom.length;
+    sFrom.push(pNode[from]);
+    sTo.push(to);
+    sLineage.push(pLineage[from]);
+    sTarget.push(targetPolity);
+    sVictim.push(pLineage[targetPolity]);
+    sLaunched.push(t);
+    sArrived.push(ta);
+    sHit.push(0);
+    sRetaliation.push(retaliation);
+    q.push(ta, STRIKE, idx, from);
+    tally.strikes++;
+    if (retaliation) tally.retaliations++;
+  };
+
+  // ── Observation ──────────────────────────────────────────────────────────
+  /** Expected visible nodes beyond half the box, at sensor 1, assuming the box is a fair sample. */
+  const farExpectation = (t: number) => {
+    if (!p.farField || census.length === 0) return 0;
+    const dd = 0.05;
+    let expected = 0;
+    for (let d = halfBox + dd / 2; ; d += dd) {
+      const te = cosmo.emission(t, d);
+      if (te < 0) break;
+      const si = Math.min(census.length - 1, Math.floor(te / p.sampleEvery));
+      const c = census[si];
+      // Need range ≥ d·(1+z).
+      const need = d * (cosmo.a(t) / cosmo.a(te));
+      const bin = Math.ceil(CENSUS_PER_DECADE * Math.log10(need / CENSUS_MIN));
+      if (bin > brightestBin) break; // nothing in any census is that bright, and further is only dimmer
+      const count = bin < 0 ? c[0] : c[bin];
+      expected += (count / boxVolume) * 4 * Math.PI * d * d * dd;
+    }
+    return expected;
   };
 
   const observe = (c: Civ, t: number) => {
@@ -291,26 +435,28 @@ export function runSim(p: SimParams): SimResult {
     let nearest = Infinity;
     for (const node of everSettled) {
       const d = uni.dist(c.node, node);
-      // Nobody at this node can be seen from further than a fully unhidden polity could.
-      if (d > p.detectRange * Math.sqrt(uni.mass[node])) continue;
+      if (d > halfBox) continue;
       const te = cosmo.emission(t, d);
       if (te < 0) continue;
       // The light arriving now left at te: find who held the node then.
-      for (let k = nodeHead[node]; k >= 0; k = pPrevAtNode[k]) {
-        if (pBorn[k] > te) continue;
-        if (te < pDied[k] && d <= pRange[k]) {
-          seen.add(pLineage[k]);
-          if (d < nearest) nearest = d;
-        }
-        break;
-      }
+      const k = holderAt(node, te);
+      if (k < 0 || !detectable(d, te, t, lumAt(k, te), 1)) continue;
+      seen.add(pLineage[k]);
+      if (d < nearest) nearest = d;
     }
-    c.saw = { lineages: seen.size, nearest };
+    const farExpected = farExpectation(t);
+    const far = rng() < 1 - Math.exp(-farExpected);
+    c.saw = { lineages: seen.size, nearest, farExpected, far };
     observers++;
-    if (seen.size === 0) silent++;
+    if (seen.size === 0 && !far) silent++;
+    // A species that looks up and sees it isn't alone may learn to keep quiet.
+    if (seen.size > 0 || far) {
+      c.genome[STEALTH] = Math.min(1, c.genome[STEALTH] + p.skyResponse);
+      c.genome[CAUTION] = Math.min(1, c.genome[CAUTION] + p.skyResponse / 2);
+    }
   };
 
-  const tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0 };
+  // ── Event loop ───────────────────────────────────────────────────────────
   let events = 0;
   let truncated = false;
   for (let ev = q.pop(); ev; ev = q.pop()) {
@@ -328,13 +474,18 @@ export function runSim(p: SimParams): SimResult {
           c.tFate = t;
           break;
         }
+        // A rich home makes expansion look cheap.
+        c.genome[EXPANSIONISM] = Math.min(1, c.genome[EXPANSIONISM] + p.homeRichness * Math.log(uni.mass[c.node]));
+        c.genome[EXPANSIONISM] = Math.max(0, c.genome[EXPANSIONISM]);
         observe(c, t);
-        log(t, 'origin', `The ${c.name} become technological (${p.starClasses[c.starClass].name} star) and see ${c.saw!.lineages || 'no'} other civilisations.`, 25);
+        const s = c.saw!;
+        const what = s.lineages ? `${s.lineages} other civilisation${s.lineages > 1 ? 's' : ''}` : s.far ? 'a distant glow of someone' : 'an empty sky';
+        log(t, 'origin', `The ${c.name} become technological (${p.starClasses[c.starClass].name} star) and see ${what}.`, 25, c.id);
         const survival = Math.pow(p.filterSurvival, 2 * (1 - c.genome[CAUTION]));
         if (rng() >= survival) {
           c.fate = 'filtered';
           c.tFate = t + rng() * p.techToSpacefaring;
-          log(c.tFate, 'filter', `The ${c.name} do not survive their own technology.`, 10);
+          log(c.tFate, 'filter', `The ${c.name} do not survive their own technology.`, 10, c.id);
           break;
         }
         q.push(t + p.techToSpacefaring * (1 + c.genome[CAUTION]), SPACEFARING, c.id);
@@ -353,8 +504,80 @@ export function runSim(p: SimParams): SimResult {
           break;
         }
         c.fate = 'expanding';
-        log(t, 'expand', `The ${c.name} begin to spread beyond their home group.`, 30);
+        // Draw the whole tech ladder now; caution climbs it more slowly.
+        let tt = t;
+        for (let k = 0; k < TIERS.length; k++) {
+          if (k > 0) tt += exponential(rng, 1 / (p.techStep * (1 + 0.5 * c.genome[CAUTION])));
+          c.tierTimes.push(tt);
+          if (k > 0 && tt < p.tEnd) q.push(tt, TIER, c.id, k);
+        }
+        log(t, 'expand', `The ${c.name} begin to spread beyond their home group.`, 30, c.id);
         acquire(c.node, c.id, c.genome, -1, t);
+        break;
+      }
+      case TIER: {
+        const c = civs[ev.a];
+        if (members[c.id].length === 0) break;
+        if (c.peak >= 3) log(t, 'tech', `The ${c.name} master ${TIERS[ev.b].name}.`, 60, c.id);
+        if (ev.b === STRIKE_TIER) q.push(t + exponential(rng, 1 / p.scanInterval), SCAN, c.id);
+        break;
+      }
+      case SCAN: {
+        const lineage = ev.a;
+        const m = members[lineage];
+        if (m.length === 0) break;
+        q.push(t + p.scanInterval, SCAN, lineage);
+        // A random holding looks, and its temperament decides whether it shoots.
+        const v = m[Math.floor(rng() * m.length)];
+        const g = pGenome[v];
+        if (rng() >= g[AGGRESSION]) break;
+        const sensor = TIERS[Math.max(0, tierOf(lineage, t))].sensor;
+        const from = pNode[v];
+        const targets: { k: number; d: number }[] = [];
+        for (const node of everSettled) {
+          const o = owner[node];
+          if (o < 0 || pLineage[o] === lineage) continue;
+          const d = uni.dist(from, node);
+          if (d > halfBox) continue;
+          const te = cosmo.emission(t, d);
+          const k = te < 0 ? -1 : holderAt(node, te);
+          // It has to have been visible then, and the same polity has to still be there now.
+          if (k !== o || !detectable(d, te, t, lumAt(k, te), sensor)) continue;
+          targets.push({ k: o, d });
+        }
+        targets.sort((a, b) => a.d - b.d);
+        for (const { k } of targets.slice(0, p.strikesPerScan)) fireStrike(v, k, t, false);
+        break;
+      }
+      case STRIKE: {
+        const idx = ev.a;
+        const from = ev.b;
+        const target = sTarget[idx];
+        const node = sTo[idx];
+        const la = sLineage[idx];
+        const lb = pLineage[target];
+        if (pDied[target] === Infinity && rng() < p.strikeKill) {
+          sHit[idx] = 1;
+          tally.strikeKills++;
+          sterileUntil[node] = t + p.sterileTime;
+          kill(target, t);
+          const res = residents.get(node);
+          if (res) {
+            for (const cid of res) {
+              civs[cid].fate = 'destroyed';
+              civs[cid].tFate = t;
+              quietAlive--;
+            }
+            residents.delete(node);
+          }
+          log(t, 'strike', `A strike from the ${civs[la].name} sterilises a group held by the ${civs[lb].name}.`, 60, la);
+        }
+        // The victims may trace it back and answer in kind.
+        if (!sRetaliation[idx] && members[lb].length > 0 && rng() < p.strikeReveal && pDied[from] === Infinity) {
+          const vm = members[lb];
+          const avenger = vm[Math.floor(rng() * vm.length)];
+          if (tierOf(lb, t) >= STRIKE_TIER && rng() < pGenome[avenger][AGGRESSION]) fireStrike(avenger, from, t, true);
+        }
         break;
       }
       case ARRIVE: {
@@ -362,6 +585,7 @@ export function runSim(p: SimParams): SimResult {
         const node = ev.b;
         const o = owner[node];
         if (o === -1) {
+          if (t < sterileUntil[node]) break;
           acquire(node, pLineage[s], mutate(pGenome[s], p.mutationSigma, rng), s, t);
           tally.settlements++;
           break;
@@ -373,10 +597,10 @@ export function runSim(p: SimParams): SimResult {
         const gs = pGenome[s];
         const go = pGenome[o];
         if (rng() >= gs[AGGRESSION] * (1 - 0.8 * go[STEALTH])) break;
-        const ps = power(gs);
-        const po = p.defenderAdvantage * power(go);
+        const ps = strength(s, t);
+        const po = p.defenderAdvantage * strength(o, t);
         if (rng() < ps / (ps + po)) {
-          if (la !== lb) log(t, 'war', `The ${civs[la].name} take a group from the ${civs[lb].name}.`, 40);
+          if (la !== lb) log(t, 'war', `The ${civs[la].name} take a group from the ${civs[lb].name}.`, 40, la);
           kill(o, t);
           acquire(node, la, mutate(gs, p.mutationSigma, rng), s, t);
           tally.conquests++;
@@ -396,16 +620,26 @@ export function runSim(p: SimParams): SimResult {
       }
       case SAMPLE: {
         const mean = new Array<number>(N_TRAITS).fill(0);
+        const bins = new Float32Array(CENSUS_BINS);
         let alive = 0;
         for (let k = 0; k < pNode.length; k++) {
           if (pDied[k] !== Infinity) continue;
           alive++;
           const g = pGenome[k];
           for (let i = 0; i < N_TRAITS; i++) mean[i] += g[i];
+          const lum = lumAt(k, t);
+          if (lum <= 0) continue;
+          const range = p.detectRange * Math.sqrt(lum);
+          const b = Math.max(0, Math.min(CENSUS_BINS - 1, Math.floor(CENSUS_PER_DECADE * Math.log10(range / CENSUS_MIN))));
+          bins[b]++;
+          if (b > brightestBin) brightestBin = b;
         }
+        // Complementary cumulative: bins[b] = polities with range ≥ the bottom of bin b.
+        for (let b = CENSUS_BINS - 2; b >= 0; b--) bins[b] += bins[b + 1];
+        census.push(bins);
         // NaN, not 0, when nobody is alive — otherwise empty universes read as low-trait ones.
         for (let i = 0; i < N_TRAITS; i++) mean[i] = alive > 0 ? mean[i] / alive : NaN;
-        series.push({ t, settled: settledCount / uni.n, lineagesAlive, quietAlive, meanGenome: mean, observers, silent });
+        series.push({ t, settled: settledCount / uni.n, lineagesAlive, quietAlive, meanGenome: mean, observers, silent, strikes: tally.strikes });
         break;
       }
       case EPOCH: {
@@ -413,7 +647,7 @@ export function runSim(p: SimParams): SimResult {
           t,
           'epoch',
           `Present day. ${observers} civilisations have looked up so far; ${silent} saw an empty sky. ` +
-            `${lineagesAlive} lineages hold ${(100 * settledCount / uni.n).toFixed(1)}% of all groups.`,
+            `${lineagesAlive} lineages hold ${((100 * settledCount) / uni.n).toFixed(1)}% of all groups; ${tally.strikes} strikes fired.`,
         );
         break;
       }
@@ -438,6 +672,15 @@ export function runSim(p: SimParams): SimResult {
       born: Float32Array.from(pBorn),
       died: Float32Array.from(pDied),
       genome,
+    },
+    strikes: {
+      from: Int32Array.from(sFrom),
+      to: Int32Array.from(sTo),
+      lineage: Int32Array.from(sLineage),
+      victim: Int32Array.from(sVictim),
+      launched: Float32Array.from(sLaunched),
+      arrived: Float32Array.from(sArrived),
+      hit: Uint8Array.from(sHit),
     },
     series,
     chronicle: chronicle.sort((a, b) => a.t - b.t),

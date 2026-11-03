@@ -14,8 +14,10 @@ export interface Summary {
   truncated: boolean;
   fates: Record<string, number>;
   observers: number;
-  /** Observers that saw no other civilisation. */
+  /** Observers that saw no other civilisation, inside the box or estimated beyond it. */
   silentFrac: number;
+  /** Same, counting only what is inside half the box. */
+  silentInBoxFrac: number;
   /** Same, for observers arising within 1 Gyr of the present day — the ones placed like us. */
   presentObservers: number;
   presentSilentFrac: number;
@@ -42,10 +44,12 @@ export function summarize(r: SimResult): Summary {
   for (const c of r.civs) fates[c.fate]++;
 
   const obs = r.civs.filter((c) => c.saw);
-  const silent = obs.filter((c) => c.saw!.lineages === 0).length;
+  const isSilent = (c: (typeof obs)[number]) => c.saw!.lineages === 0 && !c.saw!.far;
+  const silent = obs.filter(isSilent).length;
+  const silentInBox = obs.filter((c) => c.saw!.lineages === 0).length;
   const age = r.cosmology.age;
   const present = obs.filter((c) => Math.abs(c.tTech - age) < 1);
-  const presentSilent = present.filter((c) => c.saw!.lineages === 0).length;
+  const presentSilent = present.filter(isSilent).length;
   const warnings = obs.filter((c) => c.tEngulfed > c.tTech).map((c) => c.tEngulfed - c.tTech).sort((a, b) => a - b);
 
   const at = (t: number) => {
@@ -66,6 +70,7 @@ export function summarize(r: SimResult): Summary {
     fates,
     observers: obs.length,
     silentFrac: round(obs.length ? silent / obs.length : NaN),
+    silentInBoxFrac: round(obs.length ? silentInBox / obs.length : NaN),
     presentObservers: present.length,
     presentSilentFrac: round(present.length ? presentSilent / present.length : NaN),
     medianWarning: round(warnings.length ? warnings[warnings.length >> 1] : NaN),
