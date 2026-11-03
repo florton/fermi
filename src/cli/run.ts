@@ -3,17 +3,21 @@
  *
  *   npm run run -- --seed 3 --nodes 50000 --preemption 0.5
  *   npm run run -- --json        (summary only, as JSON)
+ *   npm run run -- --scenario berserkers --hardStepLog10 -5.6
  *
- * Any scalar field of SimParams can be overridden as --name value.
+ * Any scalar field of SimParams can be overridden as --name value. --scenario
+ * applies a named bundle from core/scenarios.ts first, so explicit flags win.
  */
 
 import { withDefaults, withHardStepRate, type SimParams } from '../core/params.ts';
+import { scenario } from '../core/scenarios.ts';
 import { runSim } from '../core/sim.ts';
 import { summarize } from '../core/summary.ts';
 
 export function parseOverrides(argv: string[]): { over: Partial<SimParams>; flags: Set<string> } {
   const over: Record<string, number> = {};
   const flags = new Set<string>();
+  let base: Partial<SimParams> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) continue;
@@ -23,13 +27,15 @@ export function parseOverrides(argv: string[]): { over: Partial<SimParams>; flag
       flags.add(key);
       continue;
     }
-    over[key] = Number(next);
+    if (key === 'scenario') base = scenario(next);
+    else over[key] = Number(next);
     i++;
   }
   // The shorthand isn't a SimParams field; expand it into the hard-step rates.
   const { hardStepLog10, ...rest } = over;
-  const params = hardStepLog10 === undefined ? rest : withHardStepRate(rest, hardStepLog10);
-  return { over: params as Partial<SimParams>, flags };
+  const merged = { ...base, ...rest } as Partial<SimParams>;
+  const params = hardStepLog10 === undefined ? merged : withHardStepRate(merged, hardStepLog10);
+  return { over: params, flags };
 }
 
 if (import.meta.main) {

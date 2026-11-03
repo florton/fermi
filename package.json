@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "check": "node src/cli/check.ts",
     "run": "node src/cli/run.ts",
-    "sweep": "node src/cli/sweep.ts"
+    "sweep": "node src/cli/sweep.ts",
+    "score": "node src/cli/score.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

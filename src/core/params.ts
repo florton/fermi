@@ -56,6 +56,13 @@ export interface SimParams {
   minDelay: number;
   /** The ladder from chemistry to radio telescopes. Every step must finish inside the habitable window. */
   hardSteps: HardStep[];
+  /**
+   * Rate of sterilizing events (gamma-ray bursts, nearby supernovae) a planet
+   * faces today, per Gyr. It scales with the cosmic star formation rate, so it
+   * was ~10× higher 10 Gyr ago. Estimates for the Milky Way are of order one
+   * lethal burst per Gyr (Piran & Jimenez 2014); 0 turns it off.
+   */
+  sterilizeRate: number;
   /** Safety cap on technological origins sampled in one run. */
   maxCivs: number;
 
@@ -109,6 +116,18 @@ export interface SimParams {
   // ── Technology ───────────────────────────────────────────────────────────
   /** Mean time between rungs of the tech ladder, Gyr. Caution stretches it. */
   techStep: number;
+  /**
+   * The great filter ahead, as a fact of nature: the chance that each new rung
+   * of the ladder destroys a holding that reaches it (caution and inwardness
+   * lower it). Applied per holding, not per lineage, because nothing can stop an
+   * empire spread across galaxy groups all at once faster than light.
+   */
+  tierHazard: number;
+  /**
+   * Upper bound on the inwardness trait. 1 means turning inward (transcension) is
+   * an available strategy and selection decides; 0 means it doesn't exist in nature.
+   */
+  inwardnessCap: number;
   /** Time to build a newly held node out to its tier's full conversion, Gyr. */
   conversionTime: number;
 
@@ -127,6 +146,41 @@ export interface SimParams {
   sterileTime: number;
   /** Weight of a lineage's size in conflict: power × (1 + w·log₁₀ nodes held). */
   lineageStrength: number;
+  /**
+   * Reach of one strike, Gly: every holding of the target's lineage within this
+   * distance of the impact is destroyed too. 0 hits one node. A fact about
+   * weapons, swept to ask whether decisive strikes change what wins.
+   */
+  strikeRadius: number;
+  /**
+   * How much a lineage that loses holdings to strikes or berserkers learns to
+   * hide: each loss raises the stealth its new colonies adopt by this much. A
+   * learning knob, like skyResponse.
+   */
+  threatResponse: number;
+
+  // ── Berserkers ───────────────────────────────────────────────────────────
+  /**
+   * Chance per scan that an aggressive, strike-capable lineage releases
+   * self-replicating killer probes (at most once). 0 means the technology
+   * doesn't exist. Released swarms outlive their makers.
+   */
+  berserkerChance: number;
+  /** Swarm speed, fraction of c. */
+  berserkerSpeed: number;
+  /** Chance a swarm dies out at each node it reaches (wear, mutation, defences). */
+  berserkerDecay: number;
+  /** Swarms kill holdings at least this bright (waste-heat luminosity). Dim and hidden ones are passed over. */
+  berserkerSense: number;
+
+  // ── Growth ───────────────────────────────────────────────────────────────
+  /**
+   * How much fast growth raises a holding's collapse rate: hazard × (1 + w·expansionism).
+   * The sustainability hypothesis as a fact of nature; 0 means growth is free.
+   */
+  growthCollapse: number;
+  /** Upper bound on the restraint trait; 0 removes the zoo/club option from nature. */
+  restraintCap: number;
 
   // ── Origins ──────────────────────────────────────────────────────────────
   /**
@@ -153,7 +207,10 @@ export const DEFAULTS: SimParams = {
   seed: 1,
 
   nodes: 30000,
-  boxGly: 3,
+  // Converged: present-day silence agrees within error at 4.5, 6 and 9 Gly, while
+  // 3 Gly overstated it by ~15 points (one expanding empire could fill the whole
+  // box and wrap onto itself). Resolution barely matters, so it's traded for volume.
+  boxGly: 6,
   galaxyDensity: 0.02,
   clusterFrac: 0.6,
   tEnd: 40,
@@ -174,7 +231,8 @@ export const DEFAULTS: SimParams = {
     { name: 'intelligence', log10Rate: -5 },
     { name: 'technology', log10Rate: 0 },
   ],
-  maxCivs: 20000,
+  sterilizeRate: 0,
+  maxCivs: 100000,
 
   filterSurvival: 0.5,
   techToSpacefaring: 0.001,
@@ -194,6 +252,8 @@ export const DEFAULTS: SimParams = {
   stealthCost: 1,
 
   techStep: 0.4,
+  tierHazard: 0,
+  inwardnessCap: 1,
   conversionTime: 0.2,
 
   scanInterval: 0.5,
@@ -203,6 +263,16 @@ export const DEFAULTS: SimParams = {
   strikeReveal: 0.5,
   sterileTime: 0.5,
   lineageStrength: 1,
+  strikeRadius: 0,
+  threatResponse: 0.3,
+
+  berserkerChance: 0,
+  berserkerSpeed: 0.2,
+  berserkerDecay: 0.02,
+  berserkerSense: 0.05,
+
+  growthCollapse: 0,
+  restraintCap: 1,
 
   skyResponse: 0.3,
   homeRichness: 0.15,

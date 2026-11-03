@@ -14,6 +14,13 @@
  * signature: the rarer they are, the more completions crowd toward the end of
  * the window, whatever the individual rates. That is one reason to suspect
  * Earth's steps were hard — we arrived late in our own window.
+ *
+ * Cosmic sterilization (gamma-ray bursts, nearby supernovae) is a fact of
+ * nature layered on top: a Poisson hazard that tracks the cosmic star formation
+ * rate, so it was roughly ten times worse at cosmic noon than now. A biosphere
+ * has to get from planet formation to technology without being hit. Life could
+ * in principle restart after a hit, but with hard steps a restart almost never
+ * finishes in time, so a hit is treated as the end of that planet's chance.
  */
 
 import { MPC_PER_GLY, type Cosmology } from './cosmology.ts';
@@ -109,6 +116,59 @@ export function metalFactor(cosmo: Cosmology, p: SimParams, t: number): number {
 }
 
 /**
+ * Cumulative sterilization hazard from t = 0 to t. The rate is
+ * sterilizeRate × sfr(t)/sfr(today), so its integral is a rescaled stellar mass formed.
+ */
+export function sterilizationHazard(cosmo: Cosmology, p: SimParams, t: number): number {
+  if (p.sterilizeRate <= 0) return 0;
+  return (p.sterilizeRate * cosmo.starsFormed(t)) / cosmo.sfr(cosmo.age);
+}
+
+/** Chance a biosphere on a planet formed at tf is never sterilized before t. */
+export function survivesSterilization(cosmo: Cosmology, p: SimParams, tf: number, t: number): number {
+  if (p.sterilizeRate <= 0) return 1;
+  return Math.exp(-(sterilizationHazard(cosmo, p, t) - sterilizationHazard(cosmo, p, tf)));
+}
+
+/** Habitable-zone rocky planets formed per comoving Mpc³ per Gyr at time t. */
+export function habitableFormationRate(cosmo: Cosmology, p: SimParams, t: number): number {
+  return cosmo.sfr(t) * p.habitablePerMsun * metalFactor(cosmo, p, t);
+}
+
+/**
+ * Expected technological emergences per comoving Mpc³ inside [t0, t1], split by
+ * star class. Exact up to the tables' resolution — no sampling — which matters
+ * because the classes we care about (G stars, like ours) can be rare enough
+ * that counting sampled origins would be all noise.
+ */
+export function emergenceByClass(p: SimParams, cosmo: Cosmology, table: StepTable, t0: number, t1: number): number[] {
+  const out = p.starClasses.map(() => 0);
+  const dt = 0.02;
+  for (let tf = dt / 2; tf < t1; tf += dt) {
+    const planets = habitableFormationRate(cosmo, p, tf) * dt;
+    p.starClasses.forEach((cl, c) => {
+      // Completion time τ must land in [t0 − tf, t1 − tf] and inside the window.
+      const hi = Math.min(cl.window, t1 - tf);
+      const lo = Math.max(0, t0 - tf);
+      if (hi <= lo) return;
+      if (p.sterilizeRate <= 0) {
+        out[c] += planets * cl.frac * cl.weight * (table.cdf(hi) - table.cdf(lo));
+        return;
+      }
+      // With sterilization the survival factor depends on τ, so walk the completion
+      // distribution bin by bin.
+      let mass = 0;
+      for (let tau = lo; tau < hi; tau += table.dt) {
+        const step = Math.min(table.dt, hi - tau);
+        mass += (table.cdf(tau + step) - table.cdf(tau)) * survivesSterilization(cosmo, p, tf, tf + tau + step / 2);
+      }
+      out[c] += planets * cl.frac * cl.weight * mass;
+    });
+  }
+  return out;
+}
+
+/**
  * Every technological origin in the box over the whole run, in one pass.
  *
  * The rate separates into (node mass) × (cosmic time profile), so the total for
@@ -129,7 +189,7 @@ export function sampleOrigins(p: SimParams, cosmo: Cosmology, uni: Universe, tab
   const classW = new Float64Array(classes.length);
   for (let t0 = 0; t0 < p.tEnd; t0 += dt) {
     const tMid = t0 + dt / 2;
-    const planets = cosmo.sfr(tMid) * dt * boxMpc3 * p.habitablePerMsun * metalFactor(cosmo, p, tMid);
+    const planets = habitableFormationRate(cosmo, p, tMid) * dt * boxMpc3;
     let total = 0;
     for (let c = 0; c < classes.length; c++) {
       const cl = classes[c];
@@ -151,9 +211,12 @@ export function sampleOrigins(p: SimParams, cosmo: Cosmology, uni: Universe, tab
       if (T <= table.minDelay) continue;
       const tTech = tForm + table.sampleWithin(T, rng);
       if (tTech >= p.tEnd) continue;
+      if (rng() >= survivesSterilization(cosmo, p, tForm, tTech)) continue;
       origins.push({ node: pickCumulative(cumMass, rng), tForm, tTech, starClass: c });
     }
   }
   origins.sort((a, b) => a.tTech - b.tTech);
+  // Sterilization thins the sample after the fact, so recompute the expectation exactly.
+  if (p.sterilizeRate > 0) expected = emergenceByClass(p, cosmo, table, 0, p.tEnd).reduce((a, b) => a + b, 0) * boxMpc3;
   return { origins, expected, saturated };
 }

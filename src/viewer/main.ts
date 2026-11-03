@@ -7,6 +7,7 @@
 
 import { TRAITS } from '../core/genome.ts';
 import { DEFAULTS, withHardStepRate, type SimParams } from '../core/params.ts';
+import { SCENARIOS } from '../core/scenarios.ts';
 import type { SimResult } from '../core/sim.ts';
 import type { Summary } from '../core/summary.ts';
 import { MapView, type Slice } from './map2d.ts';
@@ -25,6 +26,14 @@ const FIELDS: [key: string, label: string, step: number][] = [
   ['preemption', 'Preemption', 0.1],
   ['detectRange', 'Detection range, Gly', 0.1],
   ['techStep', 'Time per tech tier, Gyr', 0.1],
+  ['tierHazard', 'Risk per tech tier (filter ahead)', 0.05],
+  ['sterilizeRate', 'Sterilizing bursts per Gyr today', 0.25],
+  ['inwardnessCap', 'Turning inward possible (0–1)', 0.1],
+  ['restraintCap', 'Restraint / zoo possible (0–1)', 0.1],
+  ['growthCollapse', 'Fast growth raises collapse ×', 0.5],
+  ['berserkerChance', 'Berserker release chance per scan', 0.05],
+  ['strikeRadius', 'Strike blast reach, Gly', 0.05],
+  ['threatResponse', 'Hide after being hit', 0.05],
   ['strikeKill', 'Strike lethality (0 = no dark forest)', 0.1],
   ['strikeReveal', 'Chance a strike is traced', 0.1],
   ['skyResponse', 'Hide when not alone', 0.05],
@@ -53,6 +62,22 @@ const statsEl = $('stats');
 const chronicleEl = $('chronicle');
 const traitsCanvas = $<HTMLCanvasElement>('traits');
 
+// Scenario presets fill the form; any field can still be edited afterwards.
+const scenarioLabel = document.createElement('label');
+scenarioLabel.htmlFor = 'f-scenario';
+scenarioLabel.textContent = 'Scenario';
+const scenarioSel = document.createElement('select');
+scenarioSel.id = 'f-scenario';
+scenarioSel.innerHTML = Object.keys(SCENARIOS).map((s) => `<option>${s}</option>`).join('');
+form.append(scenarioLabel, scenarioSel);
+scenarioSel.onchange = () => {
+  const merged = { ...DEFAULTS, ...SCENARIOS[scenarioSel.value] } as unknown as Record<string, number>;
+  for (const [key] of FIELDS) {
+    if (key === 'hardStepLog10') continue;
+    (form.elements.namedItem(key) as HTMLInputElement).value = String(merged[key]);
+  }
+};
+
 for (const [key, label, step] of FIELDS) {
   const value = key === 'hardStepLog10' ? HARD_DEFAULT : (DEFAULTS as unknown as Record<string, number>)[key];
   const l = document.createElement('label');
@@ -69,7 +94,8 @@ for (const [key, label, step] of FIELDS) {
 $('legend').innerHTML = TRAITS.map((t, i) => `<span><i style="background:${TRAIT_COLORS[i]}"></i>${t}</span>`).join('');
 
 function readParams(): Partial<SimParams> {
-  let over: Partial<SimParams> = {};
+  // Start from the scenario so settings the form doesn't show (strike rates, stealth floor) come along.
+  let over: Partial<SimParams> = { ...SCENARIOS[scenarioSel.value] };
   for (const [key] of FIELDS) {
     const v = Number((form.elements.namedItem(key) as HTMLInputElement).value);
     if (!Number.isFinite(v)) continue;

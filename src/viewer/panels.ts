@@ -5,7 +5,7 @@ import type { SimResult } from '../core/sim.ts';
 import type { Summary } from '../core/summary.ts';
 import { lightFront, lineageRgb, tierName, type Frame } from './state.ts';
 
-export const TRAIT_COLORS = ['#8ab4ff', '#ffd27a', '#ff6b6b', '#b48cff', '#6ee7a8'];
+export const TRAIT_COLORS = ['#8ab4ff', '#ffd27a', '#ff6b6b', '#b48cff', '#6ee7a8', '#f5f5f5', '#ff9ad5'];
 
 const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(1)}%` : '—');
 const gyr = (x: number) => (Number.isFinite(x) ? `${x.toFixed(2)} Gyr` : '—');

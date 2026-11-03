@@ -1,5 +1,5 @@
 /**
- * What a civilisation is, for the purposes of this simulation: five numbers in
+ * What a civilisation is, for the purposes of this simulation: seven numbers in
  * [0, 1], each with a benefit and a cost, so that no setting wins everywhere.
  *
  *   expansionism  benefit: spreads at all, and launches sooner
@@ -13,6 +13,21 @@
  *                          (scaled by params.stealthCost)
  *   caution       benefit: survives its technological adolescence more often
  *                 cost:    slower to become spacefaring, slower to launch
+ *   inwardness    transcension as a strategy rather than a destiny: invest in
+ *                 computation and stability instead of territory
+ *                 benefit: holdings collapse less, survive tech-tier hazards more
+ *                          often, and run cooler (computation done efficiently
+ *                          sheds less detectable waste heat)
+ *                 cost:    launches much more slowly and fights worse
+ *                 Whether it spreads is up to selection; params.inwardnessCap = 0
+ *                 removes the option.
+ *   restraint     the zoo hypothesis and the galactic club as a strategy: above
+ *                 0.5, a holding leaves young civilisations alone (doesn't settle,
+ *                 preempt or destroy them) and never fights another restrained holding
+ *                 benefit: restrained lineages don't fight each other
+ *                 cost:    forgoes every node with a young civilisation in it, and
+ *                          lets future competitors grow up
+ *                 params.restraintCap = 0 removes the option.
  *
  * A genome is copied with mutation every time a node is settled, so a lineage
  * that spans thousands of nodes is a population, and selection acts on it.
@@ -20,13 +35,15 @@
 
 import { normal, type Rng } from './rng.ts';
 
-export const TRAITS = ['expansionism', 'speed', 'aggression', 'stealth', 'caution'] as const;
+export const TRAITS = ['expansionism', 'speed', 'aggression', 'stealth', 'caution', 'inwardness', 'restraint'] as const;
 export type Trait = (typeof TRAITS)[number];
 export const EXPANSIONISM = 0;
 export const SPEED = 1;
 export const AGGRESSION = 2;
 export const STEALTH = 3;
 export const CAUTION = 4;
+export const INWARDNESS = 5;
+export const RESTRAINT = 6;
 export const N_TRAITS = TRAITS.length;
 
 export type Genome = Float32Array;
@@ -52,15 +69,21 @@ export function genomeDistance(a: Genome, b: Genome): number {
 
 /** Strength in a contested node. `stealthCost` scales how much hiding weakens it (1 = default, 0 = free). */
 export function power(g: Genome, stealthCost: number): number {
-  return (1 - 0.6 * stealthCost * g[STEALTH]) * (0.5 + g[AGGRESSION]);
+  return (1 - 0.6 * stealthCost * g[STEALTH]) * (1 - 0.4 * g[INWARDNESS]) * (0.5 + g[AGGRESSION]);
 }
 
 /**
  * Fraction of a settled node's waste heat that shows. `floor` is what still
  * leaks out at full stealth — thermodynamics says heat has to go somewhere, and
  * how well it can be hidden (radiated cold, beamed away, dumped into the
- * microwave background) is an open question, so it's a parameter.
+ * microwave background) is an open question, so it's a parameter. Inward
+ * civilisations run cooler on top of that, never below the floor.
  */
 export function visibility(g: Genome, floor: number): number {
-  return 1 - (1 - floor) * g[STEALTH];
+  return Math.max(floor, (1 - (1 - floor) * g[STEALTH]) * (1 - 0.8 * g[INWARDNESS]));
+}
+
+/** Multiplier on hazards a holding faces (collapse, tech-tier catastrophe) from turning inward. */
+export function inwardShelter(g: Genome): number {
+  return 1 - 0.6 * g[INWARDNESS];
 }

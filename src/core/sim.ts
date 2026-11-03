@@ -27,10 +27,13 @@ import {
   AGGRESSION,
   CAUTION,
   EXPANSIONISM,
+  INWARDNESS,
   N_TRAITS,
+  RESTRAINT,
   SPEED,
   STEALTH,
   genomeDistance,
+  inwardShelter,
   mutate,
   power,
   randomGenome,
@@ -129,6 +132,11 @@ export interface Tally {
   strikes: number;
   strikeKills: number;
   retaliations: number;
+  /** Holdings destroyed by the tech-tier hazard. */
+  tierLosses: number;
+  /** Berserker swarms released, and holdings they destroyed. */
+  swarms: number;
+  berserkerKills: number;
 }
 
 export interface SimResult {
@@ -159,6 +167,7 @@ const EPOCH = 5;
 const TIER = 6;
 const SCAN = 7;
 const STRIKE = 8;
+const BERSERK = 9;
 
 // Luminosity census bins for the far field: detection range at sensor 1, log-spaced.
 const CENSUS_BINS = 64;
@@ -176,6 +185,12 @@ export function runSim(p: SimParams): SimResult {
   const halfBox = uni.L / 2;
   const boxVolume = uni.L ** 3;
 
+  // Optional strategies can't exceed what nature allows; everything else spans [0, 1].
+  const capped = (g: Genome) => {
+    if (g[INWARDNESS] > p.inwardnessCap) g[INWARDNESS] = p.inwardnessCap;
+    if (g[RESTRAINT] > p.restraintCap) g[RESTRAINT] = p.restraintCap;
+    return g;
+  };
   const civs: Civ[] = sample.origins.map((o, id) => ({
     id,
     name: lineageName(id),
@@ -183,7 +198,7 @@ export function runSim(p: SimParams): SimResult {
     tForm: o.tForm,
     tTech: o.tTech,
     starClass: o.starClass,
-    genome: randomGenome(rng),
+    genome: capped(randomGenome(rng)),
     fate: 'pending',
     tFate: NaN,
     saw: null,
@@ -217,6 +232,12 @@ export function runSim(p: SimParams): SimResult {
   // conquest re-launches at every neighbour and wars cascade without bound.
   const launched = new Set<number>();
   const sterileUntil = new Float32Array(uni.n);
+  // What each lineage has learned to fear: the stealth its new colonies adopt after losses.
+  const fear = new Float32Array(civs.length);
+  // Berserker swarms: who made each, which nodes each has already passed through.
+  const swarmMaker: number[] = [];
+  const swarmSeen = new Set<number>();
+  const released = new Uint8Array(civs.length);
 
   const sFrom: number[] = [];
   const sTo: number[] = [];
@@ -248,7 +269,7 @@ export function runSim(p: SimParams): SimResult {
     chronicle.push({ t, kind, text, who });
   };
   const contacts = new Set<number>();
-  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0 };
+  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0, tierLosses: 0, swarms: 0, berserkerKills: 0 };
 
   const q = new EventQueue();
   for (const c of civs) q.push(c.tTech, EMERGE, c.id);
@@ -257,6 +278,17 @@ export function runSim(p: SimParams): SimResult {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   const tierOf = (lineage: number, t: number) => tierAt(civs[lineage].tierTimes, t);
+  const restrained = (g: Genome) => g[RESTRAINT] >= 0.5;
+  /** A young civilisation is living at this node: one that has looked up and not been destroyed. */
+  const youngCivAt = (node: number) =>
+    civsAt.get(node)?.some((cid) => {
+      const f = civs[cid].fate;
+      return f === 'pending' || f === 'quiet' || f === 'engulfed';
+    }) ?? false;
+  /** A lineage lost holdings to an attack it couldn't answer; its colonies will hide more. */
+  const afflict = (lineage: number) => {
+    fear[lineage] = Math.min(1, fear[lineage] + p.threatResponse);
+  };
   const speedOf = (k: number, t: number) =>
     (p.speedMin + (p.speedMax - p.speedMin) * pGenome[k][SPEED]) * TIERS[Math.max(0, tierOf(pLineage[k], t))].speed;
   const isKin = (a: number, b: number) =>
@@ -290,7 +322,7 @@ export function runSim(p: SimParams): SimResult {
     // Only the aggressive bother sending anything at a held node; a peaceful probe would just turn back.
     if (held && rng() >= g[AGGRESSION]) return;
     const meanDelay =
-      (p.launchDelay * (1 + g[CAUTION]) * (1 + p.stealthCost * g[STEALTH]) * (1 + 2 * g[SPEED] * g[SPEED])) /
+      (p.launchDelay * (1 + g[CAUTION]) * (1 + p.stealthCost * g[STEALTH]) * (1 + 2 * g[SPEED] * g[SPEED]) * (1 + 3 * g[INWARDNESS])) /
       (0.2 + g[EXPANSIONISM]);
     const tl = Math.max(t, notBefore) + exponential(rng, 1 / meanDelay) + (held ? exponential(rng, 1 / p.siegeDelay) : 0);
     const ta = cosmo.arrival(tl, uni.dist(pNode[from], target), speedOf(from, tl));
@@ -301,6 +333,7 @@ export function runSim(p: SimParams): SimResult {
   };
 
   const acquire = (node: number, lineage: number, genome: Genome, parent: number, t: number) => {
+    if (genome[STEALTH] < fear[lineage]) genome[STEALTH] = fear[lineage];
     const id = pNode.length;
     pNode.push(node);
     pLineage.push(lineage);
@@ -329,7 +362,8 @@ export function runSim(p: SimParams): SimResult {
     if (here) for (const cid of here) if (cid !== lineage && Number.isNaN(civs[cid].tEngulfed)) civs[cid].tEngulfed = t;
 
     const g = genome;
-    const hazard = p.collapseRate * (0.5 + g[AGGRESSION]) * (1.5 - g[CAUTION]);
+    const hazard =
+      p.collapseRate * (0.5 + g[AGGRESSION]) * (1.5 - g[CAUTION]) * inwardShelter(g) * (1 + p.growthCollapse * g[EXPANSIONISM]);
     const tc = t + exponential(rng, hazard);
     if (tc < p.tEnd) q.push(tc, COLLAPSE, id);
 
@@ -345,7 +379,7 @@ export function runSim(p: SimParams): SimResult {
       for (let k = res.length - 1; k >= 0; k--) {
         const c = civs[res[k]];
         if (c.id === lineage) continue;
-        if (rng() < g[AGGRESSION] * (1 - 0.8 * c.genome[STEALTH])) {
+        if (!restrained(g) && rng() < g[AGGRESSION] * (1 - 0.8 * c.genome[STEALTH])) {
           c.fate = 'destroyed';
           c.tFate = t;
           res.splice(k, 1);
@@ -469,7 +503,9 @@ export function runSim(p: SimParams): SimResult {
     switch (ev.kind) {
       case EMERGE: {
         const c = civs[ev.a];
-        if (owner[c.node] >= 0 && rng() < p.preemption) {
+        // A restrained holder lets the natives arise: the zoo.
+        const holder = owner[c.node];
+        if (holder >= 0 && !restrained(pGenome[holder]) && rng() < p.preemption) {
           c.fate = 'preempted';
           c.tFate = t;
           break;
@@ -519,6 +555,23 @@ export function runSim(p: SimParams): SimResult {
         const c = civs[ev.a];
         if (members[c.id].length === 0) break;
         if (c.peak >= 3) log(t, 'tech', `The ${c.name} master ${TIERS[ev.b].name}.`, 60, c.id);
+        // Each holding meets the new capability on its own, and some don't survive it.
+        if (p.tierHazard > 0) {
+          const m = members[c.id];
+          const before = m.length;
+          for (let j = m.length - 1; j >= 0; j--) {
+            const k = m[j];
+            const g = pGenome[k];
+            if (rng() < Math.min(1, p.tierHazard * (1.5 - g[CAUTION]) * inwardShelter(g))) {
+              kill(k, t);
+              tally.tierLosses++;
+            }
+          }
+          const lost = before - m.length;
+          if (lost > 0 && before >= 3)
+            log(t, 'filter', `${TIERS[ev.b].name[0].toUpperCase()}${TIERS[ev.b].name.slice(1)} cost the ${c.name} ${lost} of ${before} groups.`, 40, c.id);
+          if (m.length === 0) break;
+        }
         if (ev.b === STRIKE_TIER) q.push(t + exponential(rng, 1 / p.scanInterval), SCAN, c.id);
         break;
       }
@@ -533,10 +586,19 @@ export function runSim(p: SimParams): SimResult {
         if (rng() >= g[AGGRESSION]) break;
         const sensor = TIERS[Math.max(0, tierOf(lineage, t))].sensor;
         const from = pNode[v];
+        // Once, an aggressive lineage may let loose killers that will outlive it.
+        if (p.berserkerChance > 0 && !released[lineage] && rng() < p.berserkerChance) {
+          released[lineage] = 1;
+          swarmMaker.push(lineage);
+          q.push(t, BERSERK, swarmMaker.length - 1, from);
+          tally.swarms++;
+          log(t, 'strike', `The ${civs[lineage].name} release self-replicating berserker probes.`, 30, lineage);
+        }
         const targets: { k: number; d: number }[] = [];
         for (const node of everSettled) {
           const o = owner[node];
           if (o < 0 || pLineage[o] === lineage) continue;
+          if (restrained(g) && restrained(pGenome[o])) continue;
           const d = uni.dist(from, node);
           if (d > halfBox) continue;
           const te = cosmo.emission(t, d);
@@ -570,6 +632,16 @@ export function runSim(p: SimParams): SimResult {
             }
             residents.delete(node);
           }
+          // A big enough weapon takes the victim's neighbouring holdings with it.
+          if (p.strikeRadius > 0) {
+            for (const k of [...members[lb]]) {
+              if (uni.dist(pNode[k], node) > p.strikeRadius) continue;
+              sterileUntil[pNode[k]] = t + p.sterileTime;
+              kill(k, t);
+              tally.strikeKills++;
+            }
+          }
+          afflict(lb);
           log(t, 'strike', `A strike from the ${civs[la].name} sterilises a group held by the ${civs[lb].name}.`, 60, la);
         }
         // The victims may trace it back and answer in kind.
@@ -580,13 +652,48 @@ export function runSim(p: SimParams): SimResult {
         }
         break;
       }
+      case BERSERK: {
+        const swarm = ev.a;
+        const node = ev.b;
+        const key = swarm * uni.n + node;
+        if (swarmSeen.has(key)) break;
+        swarmSeen.add(key);
+        const maker = swarmMaker[swarm];
+        const o = owner[node];
+        // They kill whatever is bright enough to notice, except their makers.
+        if (o >= 0 && pLineage[o] !== maker && lumAt(o, t) >= p.berserkerSense) {
+          const victim = pLineage[o];
+          sFrom.push(node);
+          sTo.push(node);
+          sLineage.push(maker);
+          sTarget.push(o);
+          sVictim.push(victim);
+          sLaunched.push(t);
+          sArrived.push(t);
+          sHit.push(1);
+          sRetaliation.push(true);
+          sterileUntil[node] = t + p.sterileTime;
+          kill(o, t);
+          afflict(victim);
+          tally.berserkerKills++;
+          if (members[victim].length === 0) log(t, 'strike', `Berserkers of the ${civs[maker].name} finish off the ${civs[victim].name}.`, 30, maker);
+        }
+        if (rng() < p.berserkerDecay) break;
+        for (const j of uni.neighbors(node)) {
+          if (swarmSeen.has(swarm * uni.n + j)) continue;
+          const ta = cosmo.arrival(t, uni.dist(node, j), p.berserkerSpeed);
+          if (ta < p.tEnd) q.push(ta, BERSERK, swarm, j);
+        }
+        break;
+      }
       case ARRIVE: {
         const s = ev.a;
         const node = ev.b;
         const o = owner[node];
         if (o === -1) {
           if (t < sterileUntil[node]) break;
-          acquire(node, pLineage[s], mutate(pGenome[s], p.mutationSigma, rng), s, t);
+          if (restrained(pGenome[s]) && youngCivAt(node)) break;
+          acquire(node, pLineage[s], capped(mutate(pGenome[s], p.mutationSigma, rng)), s, t);
           tally.settlements++;
           break;
         }
@@ -596,13 +703,15 @@ export function runSim(p: SimParams): SimResult {
         if (la !== lb) meet(la, lb, t);
         const gs = pGenome[s];
         const go = pGenome[o];
+        // Members of the club don't fight each other.
+        if (restrained(gs) && restrained(go)) break;
         if (rng() >= gs[AGGRESSION] * (1 - 0.8 * go[STEALTH])) break;
         const ps = strength(s, t);
         const po = p.defenderAdvantage * strength(o, t);
         if (rng() < ps / (ps + po)) {
           if (la !== lb) log(t, 'war', `The ${civs[la].name} take a group from the ${civs[lb].name}.`, 40, la);
           kill(o, t);
-          acquire(node, la, mutate(gs, p.mutationSigma, rng), s, t);
+          acquire(node, la, capped(mutate(gs, p.mutationSigma, rng)), s, t);
           tally.conquests++;
         } else {
           tally.repelled++;
