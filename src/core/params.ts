@@ -137,8 +137,16 @@ export interface SimParams {
   /** Probe speed range, fraction of c, spanned by the speed trait. */
   speedMin: number;
   speedMax: number;
-  /** Mean delay before a newly settled node launches onward, Gyr. */
-  launchDelay: number;
+  /**
+   * Mean time a new colony takes to build industry from local material and
+   * launch onward, per galaxy settled, Gyr: the self-copying factory step. A hop
+   * between groups crosses many galaxies, so it costs this once per galaxy gap
+   * crossed (see galaxyGap), and settlement spreads through a group the same way.
+   * Charging it per galaxy rather than per node keeps expansion speed independent
+   * of how coarse the nodes are. Caution, stealth, inwardness and faster (costlier)
+   * probes lengthen it; expansionism shortens it.
+   */
+  bootstrapTime: number;
   /** Base rate at which a settled node's polity collapses, per Gyr. */
   collapseRate: number;
   /** Std. dev. of genome mutation per colonisation. */
@@ -167,13 +175,6 @@ export interface SimParams {
    * larger is closer to "the stronger side always wins".
    */
   warExponent: number;
-  /**
-   * How fast settlement spreads through a galaxy group once the first galaxy is
-   * reached, as a fraction of probe speed (probes stop, build and relaunch at
-   * every galaxy on the way). A group is about as wide as the gap to the next one,
-   * so filling it takes as long as a hop or longer.
-   */
-  fillSpeed: number;
   /** Chance a native civ is prevented from arising in a node someone else already holds. */
   preemption: number;
   /**
@@ -291,12 +292,6 @@ export interface SimParams {
    * stealth then means truly invisible. 0 means the channel only carries messages.
    */
   ftlCloak: number;
-  /**
-   * Holdings in an observer's own galaxy group are seen from this far away, as a
-   * fraction of the typical node spacing, instead of from zero distance. A group
-   * is thousands of galaxies across, so "already here" doesn't mean "next door".
-   */
-  intraNodeSeeing: number;
 
   // ── Origins ──────────────────────────────────────────────────────────────
   /**
@@ -368,7 +363,9 @@ export const DEFAULTS: SimParams = {
   expansionThreshold: 0.4,
   speedMin: 0.01,
   speedMax: 0.9,
-  launchDelay: 0.05,
+  // 2.5 Myr per galaxy: the old 0.05 Gyr per hop between groups at the Large
+  // setting's spacing (about 20 galaxy gaps), so expansion there is unchanged.
+  bootstrapTime: 0.0025,
   collapseRate: 0.05,
   mutationSigma: 0.04,
   kinThreshold: 0.3,
@@ -376,7 +373,6 @@ export const DEFAULTS: SimParams = {
   defenderAdvantage: 3,
   supportReach: 0.25,
   warExponent: 1,
-  fillSpeed: 0.5,
   preemption: 1,
   detectRange: 3,
   humanContrast: 0.1,
@@ -409,7 +405,6 @@ export const DEFAULTS: SimParams = {
   berserkerBuildChance: 0.3,
   ftlChance: 0,
   ftlCloak: 0,
-  intraNodeSeeing: 0.5,
 
   skyResponse: 0.3,
   homeRichness: 0.15,

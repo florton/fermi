@@ -29,6 +29,7 @@
  * bigger telescopes and better spectra.
  */
 
+import { MPC_PER_GLY } from './cosmology.ts';
 import type { SimParams } from './params.ts';
 
 export interface Tier {
@@ -130,15 +131,68 @@ export function heatFraction(m: number, builtFor: number, conversionTime: number
 }
 
 /**
- * Share of a group's galaxies settled `heldFor` after the first arrival, if
- * the settled region spreads outward at a steady speed and crosses the whole
- * group in `fillTime`: a growing sphere, so the share goes as time cubed.
+ * Share of a group's galaxies settled `heldFor` after settlers first reach it,
+ * if they arrive at its near edge and sweep across it as a front that crosses
+ * the whole group in `fillTime`. The settled part is a cap of the sphere whose
+ * height grows steadily: share = h²(3 − h)/4 for h = 2·heldFor/fillTime, half
+ * the group when the front passes the centre. A front sweeping across, rather
+ * than a sphere growing from the middle, is what settlement looks like at any
+ * resolution: big nodes don't give natives on the near side a head start.
  */
 export function filled(heldFor: number, fillTime: number): number {
   if (heldFor <= 0) return 0;
   if (fillTime <= 0) return 1;
-  const x = heldFor / fillTime;
-  return x >= 1 ? 1 : x * x * x;
+  const h = (2 * heldFor) / fillTime;
+  return h >= 2 ? 1 : (h * h * (3 - h)) / 4;
+}
+
+/** Inverse of `filled`: the share of fillTime after which a given share of the group is settled. */
+export function fillDelay(share: number): number {
+  if (share <= 0) return 0;
+  if (share >= 1) return 1;
+  // h²(3 − h)/4 rises monotonically on [0, 2]; bisection is plenty.
+  let lo = 0;
+  let hi = 2;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if ((mid * mid * (3 - mid)) / 4 < share) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 4;
+}
+
+/**
+ * Where the nearest settled galaxy is. A node stands for many galaxies spread
+ * through a sphere of radius `groupRadius` (its share of the box), and a
+ * holding's settled galaxies fill a sphere inside it that grows as settlement
+ * spreads: radius groupRadius·∛filled. Sight runs to the near edge of that
+ * sphere, never closer than the typical gap between galaxies. Measuring to the
+ * node's centre instead would put the nearest settled galaxy a fixed share of
+ * the node spacing away, so the answer would change with resolution: coarse
+ * nodes would hide neighbours that are really next door.
+ */
+export function sightGap(fromCentre: number, groupRadius: number, fill: number, galaxyGap: number): number {
+  return Math.max(galaxyGap, fromCentre - groupRadius * Math.cbrt(Math.max(0, fill)));
+}
+
+/** Typical comoving distance between neighbouring galaxies, Gly, for a density per Mpc³. */
+export const galaxyGap = (galaxyDensity: number) => 1 / (Math.cbrt(galaxyDensity) * MPC_PER_GLY);
+
+/** Radius of a sphere holding one node's share of the box, comoving Gly. */
+export const groupRadiusOf = (volume: number, nodes: number) => Math.cbrt((3 * volume) / (4 * Math.PI * nodes));
+
+/**
+ * How far a species sits from the centre of its own group, as a share of the
+ * group's radius: uniform through the sphere, fixed by its id so every look
+ * (and the viewer) agrees.
+ */
+export function homeOffset(id: number): number {
+  // One step of mulberry32 seeded by the id.
+  let a = (id * 2654435761 + 0x6d2b79f5) >>> 0;
+  a = Math.imul(a ^ (a >>> 15), a | 1);
+  a ^= a + Math.imul(a ^ (a >>> 7), a | 61);
+  const u = ((a ^ (a >>> 14)) >>> 0) / 4294967296;
+  return Math.cbrt(u);
 }
 
 /**

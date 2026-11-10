@@ -81,9 +81,9 @@ The model keeps only what matters for who sees whom, and when:
 | Stars | F, G, K, early-M and late-M stars in their real proportions. Each habitable window is a share of the star's main-sequence lifetime as it brightens: about 3 Gyr for F, 6 for the Sun, 12 for K. M dwarfs outlast the universe so far, but flares and tidal locking are swept as unknowns | Individual stars and planets |
 | Biology | Carter's "hard steps" against those windows. A metallicity window: too few metals for rocky planets early on, and too many later, when migrating giant planets wreck inner systems. Gamma-ray bursts follow metal-poor star formation, so the young universe was far more dangerous | Every planet that never produces a technological species: counted analytically, never instantiated |
 | Travel | Probes that coast and slow as space expands (momentum ∝ 1/a), with build time rising steeply near light speed | Everything inside a galaxy |
-| Civilisations | Filters and collapse. Settlement spreads galaxy by galaxy through each group, taking about as long as the hop between groups. Wars are won by energy, with support from neighbouring holdings and attacks from afar both weakened by distance | Individual galaxies' politics |
+| Civilisations | Filters and collapse. Settlers reach a group's near edge and sweep across it as a front. Each colony takes a build-up time to bootstrap industry and launch onward (the self-copying factory step), charged per galaxy crossed, so expansion speed doesn't depend on how coarse the groups are. Wars are won by energy, with support from neighbouring holdings and attacks from afar both weakened by distance | Individual galaxies' politics |
 | Technology | A continuous climb through four milestones: interstellar probes → Dyson swarms → relativistic kinetic weapons → galactic engineering. It smoothly raises probe speed, the share of starlight harnessed (from a thousandth to all of it) and telescope sensitivity. Power is shown as a Kardashev number | Specific inventions |
-| Detection | Mid-infrared waste heat of single galaxies on the past light cone. It is judged against a present-day survey: it must be bright enough at its luminosity distance (WISE-class, about 3 Gly for a fully lit galaxy) and a large enough share of starlight (about 10%) to stand out from dust. Species that see nothing look again 10 Myr, 100 Myr and 1 Gyr later with better telescopes. Exact within half the box, estimated beyond it from the box's own census | Radio leakage, far too faint to cross between galaxies |
+| Detection | Mid-infrared waste heat of single galaxies on the past light cone. It is judged against a present-day survey: it must be bright enough at its luminosity distance (WISE-class, about 3 Gly for a fully lit galaxy) and a large enough share of starlight (about 10%) to stand out from dust. Species that see nothing look again 10 Myr, 100 Myr and 1 Gyr later with better telescopes. Distances run from where the species lives in its own group to the near edge of each holding's settled galaxies, never closer than the gap between galaxies. Exact within half the box, estimated beyond it from the box's own census | Radio leakage, far too faint to cross between galaxies |
 | Time | Event-driven, jumping from one happening to the next | The empty billions of years in between |
 
 Each expanding lineage carries eight traits: **expansionism, speed, aggression, stealth,
@@ -136,10 +136,33 @@ alien psychology rather than dynamics.
 
 These hold within this model and its assumptions. They are not claims about the real universe.
 
-The first three come from the current model: real stars, metal-biased radiation, coasting
-probes, calibrated infrared sight and energy-based wars. They rest on two sweeps: 144 universes
-comparing radiation hazards (4 hard-step rates × 12 seeds each), and 96 across eight scenarios
-(4 seeds each). The rest were found with the earlier, simpler model and haven't been re-run yet.
+The first is from the latest model, after the resolution fixes described under Robustness.
+The next three come from the model just before those fixes: real stars, metal-biased radiation,
+coasting probes, calibrated infrared sight and energy-based wars. They rest on two sweeps: 144
+universes comparing radiation hazards (4 hard-step rates × 12 seeds each), and 96 across eight
+scenarios (4 seeds each). The fixes change how far apart things are seen and how fast settlement
+spreads, so those numbers need a re-run. The rest were found with the earlier, simpler model.
+
+- **The verdict doesn't hinge on assumed probe speeds or tech pace.** One question is whether
+  assuming particular probe speeds biases the test. To find out, 288 universes crossed hard-step
+  rates (10⁻⁴·⁶ to 10⁻⁵·⁸ per Gyr) with each of three expansion assumptions in turn:
+  - top probe speed from 0.1c to 0.99c;
+  - time per tech milestone from 10 Myr to 1 Gyr;
+  - build-up time per galaxy settled, the self-copying factory step, from 10 thousand to 20
+    million years.
+
+  Each was scored against our own sky. Everywhere, life as common as 10⁻⁵ or commoner never
+  produced an observer like us, so "life must be rare" holds across the whole range. What the
+  assumptions do shift is *how* rare. Slow expansion lets life be about 2.5 times commoner
+  (10⁻⁵·⁴ rather than 10⁻⁵·⁸), because fewer later species get overrun:
+  - at 0.1c, 10⁻⁵·⁴ takes 41% of the self-indication posterior; at 0.9c, 3%;
+  - with 20 Myr build-up per galaxy, 44%; with 10 thousand years, 0%.
+
+  Under self-sampling, our sky says nothing about speed, pace or build-up: each stays within
+  noise of a flat prior. Tech pace matters least. So bottom-up engineering pays most for the
+  expansion rate (launch speed and build-up), which sets the rarity estimate, not the verdict.
+  The default and baseline settings were used, at 6 Gly with 30k groups and 6 seeds per setting.
+  Counts of observers like us are small (4–187 per setting), so the shares are rough.
 
 - **Either life is rare or the young universe was deadly.**
   - **Without radiation hazards**, life has to be rare. At hard steps of 10⁻⁵ per Gyr or
@@ -222,18 +245,31 @@ exact sight reaches half its shortest side; the census covers the rest. Small on
 window can dip below the 4.5 Gly floor. These convergence checks were made with the earlier
 model and a cube.
 
-**Resolution matters in the current model.** With gradual settlement, how coarse the groups
-are changes the answer a lot. Here are runs in the same box (Large's volume, 16:9), varying only
-the group count:
+**Resolution, re-checked on the current model.** The model used to depend strongly on how
+coarse the groups were: very coarse groups made skies about ten times more silent. There were
+three causes, all now fixed:
+- The nearest settled galaxy was placed a fixed share of the group spacing away. Distances now
+  run to the near edge of the settled region.
+- The build-up delay was charged once per hop between groups. It is now charged per galaxy
+  crossed.
+- Settlement spread out from each group's centre, giving natives a head start. It now sweeps
+  across from the near edge.
 
-| Groups | Galaxies per group | Observers who saw an empty sky |
-| --- | --- | --- |
-| 120k (Large) | about 8,300 | 3–4% (3 seeds) |
-| 7.5k | about 133,000 | 29–31% (3 seeds) |
+Here is a 6 Gly cube (2 seeds each, after the fixes):
 
-Vast (48 Gly, 480k groups, about 133,000 galaxies each) gave 39% on one seed, about 3 minutes
-and 1.6 GB. So treat Huge and Vast as views of scale, not as answers. Use Large, or the
-scripts' finer default, for numbers. Why coarse groups go silent hasn't been pinned down yet.
+| Groups | Galaxies per group | Empty sky at first light | Observers |
+| --- | --- | --- | --- |
+| 1,875 | about 132,000 | 1.2–1.7% | 12,900–13,000 |
+| 7,500 | about 33,000 | 1.0–1.1% | 6,900–7,800 |
+| 30,000 | about 8,300 | 0.7–1.4% | 4,900–5,100 |
+| 120,000 | about 2,100 | 0.6–0.8% | 7,000–7,100 |
+
+Silence no longer depends on resolution. Observer counts agree within about 25% from 7,500 to
+120,000 groups, a range that takes in both the scripts' default and Large. At the coarsest
+setting, which Huge and Vast match, there are still about twice as many observers. Strikes
+and wars destroy whole groups, so each hit removes more of the universe when groups are big.
+Use Huge and Vast to see scale, and the scripts or Large for numbers. Vast takes about 3
+minutes and 1.6 GB.
 
 ## Known limits
 
@@ -241,7 +277,8 @@ scripts' finer default, for numbers. Why coarse groups go silent hasn't been pin
   fair sample of the universe, not a simulation of real neighbours.
 - The links between a species' origin and its traits are hypotheses with tunable strength, not findings.
 - Strikes and stealth act per galaxy group. Wiping out a lineage's home or whole cluster at
-  once isn't modelled, so strikes wear empires down but can't decapitate them.
+  once isn't modelled, so strikes wear empires down but can't decapitate them. Since a hit
+  destroys a whole group, strikes do more damage in coarser runs (see Robustness).
 - Every group follows the cosmic mean history of star formation and metals. Real clusters
   formed their stars early and field groups later, which would shift where and when life arises.
 - The milestone values (how much starlight each stage harnesses, how good its telescopes are)

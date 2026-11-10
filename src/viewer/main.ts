@@ -32,7 +32,7 @@ const FIELDS: [key: string, label: string, step: number][] = [
   ['metalSpread', 'Metallicity spread, dex', 0.05],
   ['filterSurvival', 'Filter survival', 0.05],
   ['speedMax', 'Max probe launch speed, c (probes coast and slow)', 0.05],
-  ['fillSpeed', 'Spread through a group, × probe speed', 0.05],
+  ['bootstrapTime', 'Build-up time per galaxy settled before launching on, Gyr', 0.0005],
   ['preemption', 'Preemption (× share of group settled)', 0.1],
   ['detectRange', 'Range at which we’d see one fully lit galaxy, Gly', 0.1],
   ['humanContrast', 'Least waste heat we can tell from dust (share of starlight)', 0.01],

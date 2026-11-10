@@ -57,13 +57,18 @@ import {
   STRIKE_TIER,
   TIERS,
   canSee,
+  fillDelay,
   filled,
+  galaxyGap,
+  groupRadiusOf,
   heatFraction,
+  homeOffset,
   homeSensor,
   humanSensor,
   lineageSensor,
   maturity,
   maxSight,
+  sightGap,
   speedFactor,
   tierAt,
   type Sensor,
@@ -264,7 +269,9 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
   const halfBox = Math.min(Math.min(uni.L, uni.Lx) / 2, uni.ringReach);
   const boxVolume = uni.volume;
   /** Radius of a sphere as big as one group's share of the box, comoving Gly: how far settlement spreads to fill it. */
-  const groupRadius = Math.cbrt((3 * boxVolume) / (4 * Math.PI * uni.n));
+  const groupRadius = groupRadiusOf(boxVolume, uni.n);
+  /** Typical gap between neighbouring galaxies, comoving Gly: the step of settlement and the nearest anything can be. */
+  const gap = galaxyGap(p.galaxyDensity);
 
   // Optional strategies can't exceed what nature allows; everything else spans [0, 1].
   const capped = (g: Genome) => {
@@ -461,6 +468,20 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     return -1;
   };
 
+  /**
+   * Mean build-up time per galaxy settled for a polity with genome g launching
+   * at speed v, Gyr. Faster probes take longer to build: shielding against dust
+   * and fuel for braking both grow with γ − 1, cheap at a few percent of light
+   * speed and steep near it, so probes at speedMax cost three times as long.
+   */
+  const buildUp = (g: Genome, v: number) =>
+    (p.bootstrapTime *
+      (1 + g[CAUTION]) *
+      (1 + p.stealthCost * g[STEALTH]) *
+      (1 + (2 * gammaMinus1(v)) / gammaMax) *
+      (1 + 3 * g[INWARDNESS])) /
+    (0.2 + g[EXPANSIONISM]);
+
   const launch = (from: number, target: number, t: number, notBefore = t) => {
     const key = from * uni.n + target;
     if (launched.has(key)) return;
@@ -469,19 +490,20 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     const held = owner[target] >= 0 && !isKin(from, owner[target]);
     // Only the aggressive bother sending anything at a held node; a peaceful probe would just turn back.
     if (held && rng() >= g[AGGRESSION]) return;
-    // Faster probes take longer to build: shielding against dust and fuel for
-    // braking both grow with γ − 1, cheap at a few percent of light speed and
-    // steep near it. Probes at speedMax cost three times as long as slow ones.
+    // Settlers make for the target's near edge, not its centre (see `filled`), and
+    // every galaxy settled on the way has to build up before relaunching, so the
+    // delay grows with the galaxies crossed: one build-up for the first, then the
+    // rest as a near-certain sum.
     const v = speedOf(from, t);
-    const meanDelay =
-      (p.launchDelay *
-        (1 + g[CAUTION]) *
-        (1 + p.stealthCost * g[STEALTH]) *
-        (1 + (2 * gammaMinus1(v)) / gammaMax) *
-        (1 + 3 * g[INWARDNESS])) /
-      (0.2 + g[EXPANSIONISM]);
-    const tl = Math.max(t, notBefore) + exponential(rng, 1 / meanDelay) + (held ? exponential(rng, 1 / p.siegeDelay) : 0);
-    const ta = cosmo.coast(tl, uni.dist(pNode[from], target), speedOf(from, tl));
+    const d = Math.max(gap, uni.dist(pNode[from], target) - groupRadius);
+    const perGalaxy = buildUp(g, v);
+    const steps = Math.max(1, d / gap);
+    const tl =
+      Math.max(t, notBefore) +
+      exponential(rng, 1 / perGalaxy) +
+      (steps - 1) * perGalaxy +
+      (held ? exponential(rng, 1 / p.siegeDelay) : 0);
+    const ta = cosmo.coast(tl, d, speedOf(from, tl));
     if (ta < p.tEnd) {
       q.push(ta, ARRIVE, from, target);
       tally.launches++;
@@ -497,12 +519,14 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     pParent.push(parent);
     pBorn.push(t);
     pDied.push(Infinity);
-    // Settlement spreads from the first galaxy reached across the group at a
-    // fraction of probe speed; the group was physically smaller in the past.
+    // Settlers arrive at the group's near edge and sweep across it the way
+    // settlement spreads between groups: probes fly from galaxy to galaxy and each
+    // colony builds up before relaunching. fillTime is the whole crossing, two radii.
+    // The group was physically smaller in the past.
     const v = Math.max(1e-3, (p.speedMin + (p.speedMax - p.speedMin) * genome[SPEED]) * speedFactor(Math.max(0, matOf(lineage, t))));
-    const fillTime = (cosmo.a(t) * groupRadius) / (p.fillSpeed * v);
+    const fillTime = 2 * ((cosmo.a(t) * groupRadius) / v + (groupRadius / gap) * buildUp(genome, v));
     pFillTime.push(fillTime);
-    pFillStart.push(t - fillTime * Math.cbrt(Math.min(1, alreadyFilled)));
+    pFillStart.push(t - fillTime * fillDelay(Math.min(1, alreadyFilled)));
     pGenome.push(genome);
     pVis.push(visibility(genome, p.stealthFloor));
     if (nodeHead[node] === -1) everSettled.push(node);
@@ -530,10 +554,13 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     const tc = t + exponential(rng, hazard);
     if (tc < p.tEnd) q.push(tc, COLLAPSE, id);
 
+    // Onward launches leave once the front has crossed to the middle of the group,
+    // so a chain of hops advances at the front's real speed, edge to edge.
+    const fromMiddle = pFillStart[id] + fillTime / 2;
     for (const j of uni.neighbors(node)) {
       const o = owner[j];
       if (o >= 0 && isKin(id, o)) continue;
-      launch(id, j, t, sterileUntil[j]);
+      launch(id, j, t, Math.max(sterileUntil[j], fromMiddle));
     }
 
     // Anyone living here quietly will find themselves inside someone's
@@ -542,7 +569,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     if (res) {
       for (const cid of res) {
         if (cid === lineage) continue;
-        const reached = pFillStart[id] + fillTime * Math.cbrt(rng());
+        const reached = pFillStart[id] + fillTime * fillDelay(rng());
         q.push(Math.max(t, reached), ENCOUNTER, id, cid);
       }
     }
@@ -673,8 +700,27 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     return expected;
   };
 
-  // How far away holdings in one's own galaxy group are, for seeing them.
-  const intraNode = p.intraNodeSeeing * Math.cbrt(uni.volume / uni.n);
+  /**
+   * Light reaching someone at t from a node whose centre is `fromCentre` away:
+   * the holder whose light it is, the distance to that holder's nearest settled
+   * galaxy (see sightGap), and when and at what scale factor the light left.
+   * Null if no one held it then. The distance depends on how far settlement had
+   * spread when the light left, which depends on the distance, so it is settled
+   * by a couple of rounds of substitution.
+   */
+  const sightOf = (node: number, fromCentre: number, t: number) => {
+    let d = fromCentre;
+    for (let round = 0; round < 3; round++) {
+      const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
+      if (te < 0) return null;
+      const k = holderAt(node, te);
+      if (k < 0) return null;
+      const next = sightGap(fromCentre, groupRadius, fillOf(k, te), gap);
+      if (Math.abs(next - d) < 1e-4 || round === 2) return { k, d: next, te, aEmit };
+      d = next;
+    }
+    return null;
+  };
   const shellShare = (r: number) => Math.min(1, ((4 / 3) * Math.PI * r ** 3) / boxVolume);
   /**
    * Visit groups within `reach` of `from` that someone has ever settled. Sweeps
@@ -699,17 +745,19 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     const seen = new Set<number>();
     let nearest = Infinity;
     const aObs = cosmo.a(t);
-    const look = (node: number, d: number) => {
-      const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
-      if (te < 0) return;
-      // The light arriving now left at te: find who held the node then.
-      const k = holderAt(node, te);
-      if (k < 0 || pLineage[k] === c.id || !canSee(heatAt(k, te), d, aEmit, aObs, p.detectRange, s)) return;
+    const look = (node: number, fromCentre: number) => {
+      // The light arriving now left at te: who held the node then, and how near their settled galaxies came.
+      const sight = sightOf(node, fromCentre, t);
+      if (!sight) return;
+      const { k, d, te, aEmit } = sight;
+      if (pLineage[k] === c.id || !canSee(heatAt(k, te), d, aEmit, aObs, p.detectRange, s)) return;
       seen.add(pLineage[k]);
       if (d < nearest) nearest = d;
     };
-    if (nodeHead[c.node] >= 0) look(c.node, intraNode);
-    lookAround(c.node, maxSight(p.detectRange, s, aObs), look, () => false);
+    // Its own group, seen from where in it the species lives.
+    if (nodeHead[c.node] >= 0) look(c.node, groupRadius * homeOffset(c.id));
+    // Others, out to where even their near edges are beyond sight.
+    lookAround(c.node, maxSight(p.detectRange, s, aObs) + groupRadius, look, () => false);
     const farExpected = farExpectation(t, s);
     const far = rng() < 1 - Math.exp(-farExpected);
     return { seen, nearest, farExpected, far };
@@ -896,27 +944,31 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
         const selfFtl = hasFtl(lineage, t);
         // Search outward and stop once the nearest `want` visible targets are certain.
         // A channel holder can sense other holders at any distance, so its search isn't bounded by light.
+        // The looking holding's own settled galaxies reach out towards the target too.
+        const ownReach = groupRadius * Math.cbrt(fillOf(v, t));
         lookAround(
           from,
-          selfFtl ? halfBox : maxSight(p.detectRange, sensor, aObs),
-          (node, d) => {
+          selfFtl ? halfBox : maxSight(p.detectRange, sensor, aObs) + ownReach + groupRadius,
+          (node, dCentre) => {
             const o = owner[node];
             if (o < 0 || pLineage[o] === lineage || allied(lineage, pLineage[o])) return;
             if (selfRestrained && restrained(pGenome[o])) return;
             // Channel holders sense each other now, however dim or far; everyone else needs light.
             const sensed = selfFtl && hasFtl(pLineage[o], t);
+            let d = Math.max(gap, dCentre - ownReach);
             if (!sensed) {
-              const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
+              const sight = sightOf(node, d, t);
               // It has to have been visible then, and the same polity has to still be there now.
-              const k = te < 0 ? -1 : holderAt(node, te);
-              if (k !== o || !canSee(heatAt(k, te), d, aEmit, aObs, p.detectRange, sensor)) return;
+              if (!sight || sight.k !== o || !canSee(heatAt(o, sight.te), sight.d, sight.aEmit, aObs, p.detectRange, sensor)) return;
+              d = sight.d;
             }
             targets.push({ k: o, d });
           },
           (beyond) => {
             if (targets.length < want) return false;
             targets.sort((a, b) => a.d - b.d);
-            return targets[want - 1].d <= beyond;
+            // Unvisited nodes are at least `beyond` away centre to centre, so their settled edges at least this far.
+            return targets[want - 1].d <= beyond - ownReach - groupRadius;
           },
         );
         targets.sort((a, b) => a.d - b.d);

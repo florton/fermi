@@ -7,7 +7,7 @@
 import { makeCosmology, type Cosmology } from '../core/cosmology.ts';
 import { N_TRAITS, visibility } from '../core/genome.ts';
 import type { SimResult } from '../core/sim.ts';
-import { TIERS, canSee, filled, heatFraction, humanSensor, kardashev, maturity, tierAt } from '../core/tech.ts';
+import { TIERS, canSee, filled, galaxyGap, groupRadiusOf, heatFraction, homeOffset, humanSensor, kardashev, maturity, sightGap, tierAt } from '../core/tech.ts';
 
 export const cosmo: Cosmology = makeCosmology();
 
@@ -123,7 +123,8 @@ export function whatSaw(r: SimResult, civId: number): { node: number; lineage: n
   const sensor = humanSensor(r.params);
   const L = r.universe.boxGly;
   const Lx = boxWidth(r);
-  const intra = r.params.intraNodeSeeing * Math.cbrt((Lx * L * L) / x.length);
+  const R = groupRadiusOf(Lx * L * L, x.length);
+  const gap = galaxyGap(r.params.galaxyDensity);
   const reach = r.universe.exactReach ?? Math.min(L, Lx) / 2;
   const pol = r.polities;
   const out: { node: number; lineage: number }[] = [];
@@ -131,15 +132,24 @@ export function whatSaw(r: SimResult, civId: number): { node: number; lineage: n
   for (let k = 0; k < pol.node.length; k++) {
     if (pol.born[k] >= t) continue;
     const node = pol.node[k];
+    const lin = pol.lineage[k];
+    if (lin === civId) continue;
     const dx = wrapDelta(x[c.node], x[node], Lx);
     const dy = wrapDelta(y[c.node], y[node], L);
     const dz = wrapDelta(z[c.node], z[node], L);
-    const d = Math.max(Math.hypot(dx, dy, dz), node === c.node ? intra : 0);
-    if (d > reach) continue;
-    const te = cosmo.emission(t, d);
+    // From where the species lives in its own group; to the near edge of the holding's settled galaxies.
+    const fromCentre = node === c.node ? R * homeOffset(civId) : Math.hypot(dx, dy, dz);
+    if (fromCentre > reach) continue;
+    // Same substitution as the simulation's sightOf: the reach of settlement depends on when the light left.
+    let d = fromCentre;
+    let te = cosmo.emission(t, d);
+    for (let round = 0; round < 3; round++) {
+      const next = sightGap(fromCentre, R, filled(te - pol.fillStart[k], pol.fillTime[k]), gap);
+      if (Math.abs(next - d) < 1e-4) break;
+      d = next;
+      te = cosmo.emission(t, d);
+    }
     if (te < pol.born[k] || te >= pol.died[k]) continue;
-    const lin = pol.lineage[k];
-    if (lin === civId) continue;
     const g = pol.genome.subarray(k * N_TRAITS, (k + 1) * N_TRAITS);
     const floor = r.params.ftlCloak > 0 && r.civs[lin].ftl <= te ? 0 : r.params.stealthFloor;
     const heat = heatFraction(maturity(r.civs[lin].tierTimes, te), te - pol.born[k], r.params.conversionTime, visibility(g, floor));
