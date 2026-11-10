@@ -95,6 +95,11 @@ export function tierName(r: SimResult, lineage: number, t: number): string {
   return k < 0 ? '—' : TIERS[k].name;
 }
 
+/** The box's width (x), Gly; its height and depth are r.universe.boxGly. Runs saved before boxes could be wide are cubes. */
+export function boxWidth(r: SimResult): number {
+  return r.universe.boxX ?? r.universe.boxGly;
+}
+
 /** Shortest periodic displacement from a to b along one axis. */
 export function wrapDelta(a: number, b: number, L: number): number {
   let d = b - a;
@@ -108,7 +113,7 @@ export function wrapDelta(a: number, b: number, L: number): number {
  * simulation's own rules: light that left each node at the right time, from
  * whoever held it then, hot enough to stand out from dust and bright enough
  * after redshift for present-day telescopes. Inside half the box only, like the
- * simulation's exact part.
+ * simulation's exact part (half the box's shortest side).
  */
 export function whatSaw(r: SimResult, civId: number): { node: number; lineage: number }[] {
   const c = r.civs[civId];
@@ -116,19 +121,21 @@ export function whatSaw(r: SimResult, civId: number): { node: number; lineage: n
   const t = c.tTech;
   const { x, y, z } = r.positions;
   const sensor = humanSensor(r.params);
-  const L = r.params.boxGly;
-  const intra = (r.params.intraNodeSeeing * L) / Math.cbrt(x.length);
+  const L = r.universe.boxGly;
+  const Lx = boxWidth(r);
+  const intra = r.params.intraNodeSeeing * Math.cbrt((Lx * L * L) / x.length);
+  const reach = r.universe.exactReach ?? Math.min(L, Lx) / 2;
   const pol = r.polities;
   const out: { node: number; lineage: number }[] = [];
   const a0 = cosmo.a(t);
   for (let k = 0; k < pol.node.length; k++) {
     if (pol.born[k] >= t) continue;
     const node = pol.node[k];
-    const dx = wrapDelta(x[c.node], x[node], L);
+    const dx = wrapDelta(x[c.node], x[node], Lx);
     const dy = wrapDelta(y[c.node], y[node], L);
     const dz = wrapDelta(z[c.node], z[node], L);
     const d = Math.max(Math.hypot(dx, dy, dz), node === c.node ? intra : 0);
-    if (d > L / 2) continue;
+    if (d > reach) continue;
     const te = cosmo.emission(t, d);
     if (te < pol.born[k] || te >= pol.died[k]) continue;
     const lin = pol.lineage[k];

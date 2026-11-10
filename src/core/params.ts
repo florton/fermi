@@ -42,8 +42,10 @@ export interface SimParams {
   // ── Universe ─────────────────────────────────────────────────────────────
   /** Number of nodes. Each node is a galaxy group, not a single galaxy; see universe.ts. */
   nodes: number;
-  /** Side of the periodic comoving box, Gly. */
+  /** Height and depth of the periodic comoving box, Gly. */
   boxGly: number;
+  /** Width ÷ height of the box. 1 is a cube; the viewer widens it to match the screen. */
+  boxAspect: number;
   /** Galaxies per comoving Mpc³ that matter (roughly Milky-Way-class and up). */
   galaxyDensity: number;
   /** Fraction of nodes placed in clusters rather than the field. */
@@ -325,6 +327,7 @@ export const DEFAULTS: SimParams = {
   // 3 Gly overstated it by ~15 points (one expanding empire could fill the whole
   // box and wrap onto itself). Resolution barely matters, so it's traded for volume.
   boxGly: 6,
+  boxAspect: 1,
   galaxyDensity: 0.02,
   clusterFrac: 0.6,
   tEnd: 40,

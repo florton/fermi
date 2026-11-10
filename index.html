@@ -14,6 +14,7 @@
       <div class="progress-text" id="progress-text"></div>
     </div>
     <div class="tip" id="tip" hidden></div>
+    <button class="exit-map-only" id="exit-map-only" title="Show the bars and panels again (F or Esc)">✕ Exit full map</button>
     <div class="map-key" id="map-key" title="What the map's symbols mean (toggle in Layers)">
       <span title="Territory, coloured by lineage; brighter means more starlight turned to waste heat"><i class="k-tile"></i>territory</span>
       <span title="Unsettled galaxy groups"><b class="k-dot">·</b>empty</span>
@@ -31,7 +32,7 @@
         <button id="universe-btn" title="Kinds of civilisation and universe conditions">Universe ▾</button>
         <div class="popover wide" id="universe" hidden></div>
       </div>
-      <select id="size" title="How much of the universe to simulate">
+      <select id="size" title="How much of the universe to simulate: the volume of a cube this size, shaped to the window when you press Run">
         <option value="6,30000">Small · 6 Gly</option>
         <option value="12,120000" selected>Large · 12 Gly</option>
         <option value="24,120000">Huge · 24 Gly, coarser</option>

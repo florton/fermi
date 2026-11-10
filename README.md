@@ -46,7 +46,11 @@ domain root or in a subfolder.
   with the same settings.
 - **Universe menu:** a preset, plus tick lists of the kinds of civilisation that can arise and
   the conditions of nature.
-- **Map:** one copy of the box, filling the screen. Drag to pan, scroll to zoom, hover for detail.
+- **Map:** one copy of the box. When you press Run the box takes the window's shape (same volume
+  as the cube the size menu names), so zoomed all the way out it fills the screen between the
+  bars, or fits between the panels when they're open. Panning stops at the panels' edges, so
+  nothing gets stuck under them. Strikes and rings that cross an edge carry on from the opposite
+  one, as the box wraps. Drag to pan, scroll to zoom, hover for detail.
   Depth and Thickness pick a slab of the 3D box to show. Brightness is the share of a group's
   starlight turned to waste heat, on a log scale. A new holding starts dim and brightens as
   settlement spreads through the group and its technology climbs.
@@ -59,6 +63,9 @@ domain root or in a subfolder.
   and telescopes), the largest lineages, territory by kind, run statistics, mean traits over
   time, and a chronicle of firsts. Tab hides them.
 - **Layers and Parameters:** turn map layers on and off or change the tile size; edit any setting.
+- **Full screen:** where the browser refuses full screen (some embedded pages and app panes),
+  the button gives the map the whole window instead, hiding the bars and panels; F or Esc
+  brings them back.
 - **Keys:** Space play/pause · ←/→ step · +/− zoom · 0 fit · Tab panels · F full screen · Esc deselect
 
 ![The Universe menu: kinds of civilisation on the left, conditions of nature on the right](docs/universe-menu.png)
@@ -70,7 +77,7 @@ The model keeps only what matters for who sees whom, and when:
 | Level | Modelled | Pruned |
 | --- | --- | --- |
 | Cosmology | Flat ΛCDM expansion, light travel time, the cosmic event horizon, the history of star formation | Radiation era, local dynamics |
-| Universe | A periodic comoving box of galaxy groups with clustering and mass | Individual galaxies; each group stands for thousands |
+| Universe | A periodic comoving box of galaxy groups with clustering and mass. A cube in the scripts; in the viewer it is stretched to the window's shape at the same volume | Individual galaxies; each group stands for thousands |
 | Stars | F, G, K, early-M and late-M stars in their real proportions. Each habitable window is a share of the star's main-sequence lifetime as it brightens: about 3 Gyr for F, 6 for the Sun, 12 for K. M dwarfs outlast the universe so far, but flares and tidal locking are swept as unknowns | Individual stars and planets |
 | Biology | Carter's "hard steps" against those windows. A metallicity window: too few metals for rocky planets early on, and too many later, when migrating giant planets wreck inner systems. Gamma-ray bursts follow metal-poor star formation, so the young universe was far more dangerous | Every planet that never produces a technological species: counted analytically, never instantiated |
 | Travel | Probes that coast and slow as space expands (momentum ∝ 1/a), with build time rising steeply near light speed | Everything inside a galaxy |
@@ -209,8 +216,11 @@ Present-day silence was checked against things the answer shouldn't depend on. R
 (15k–60k groups) and the far-field estimate change it by no more than noise. Box size does
 matter: below about 4.5 billion light-years, one empire can fill the box and wrap onto itself,
 overstating silence. Scripts default to 6 Gly with 30k groups (about 10 s a run). The viewer's
-Large setting uses 12 Gly with 120k groups (about 50 s), which matches the converged answer.
-These convergence checks were made with the earlier model.
+Large setting uses the volume of a 12 Gly cube with 120k groups (about 50 s), which matches the
+converged answer. On a 16:9 window that box is about 18 Gly wide and 10 Gly tall and deep, and
+exact sight reaches half its shortest side; the census covers the rest. Small on a very wide
+window can dip below the 4.5 Gly floor. These convergence checks were made with the earlier
+model and a cube.
 
 ## Known limits
 

@@ -8,6 +8,7 @@ import { buildStepTable, habitableWindow, mainSequenceLife, makeLife } from '../
 import { makeCosmology } from '../core/cosmology.ts';
 import { withDefaults } from '../core/params.ts';
 import { canSee, humanSensor } from '../core/tech.ts';
+import { makeUniverse } from '../core/universe.ts';
 
 let failed = 0;
 function expect(name: string, got: number, want: number, tol: number) {
@@ -66,6 +67,30 @@ const human = humanSensor(d);
 expect('a fully lit galaxy at the detection range is seen', canSee(1, d.detectRange * 0.999, 1, 1, d.detectRange, human) ? 1 : 0, 1, 0);
 expect('…and just past it is not', canSee(1, d.detectRange * 1.001, 1, 1, d.detectRange, human) ? 1 : 0, 0, 0);
 expect('heat below the dust contrast is never seen, however close', canSee(human.contrast * 0.9, 1e-3, 1, 1, d.detectRange, human) ? 1 : 0, 0, 0);
+
+// The grid searches must find exactly what checking every node would, across the
+// wrap, out to the radius the simulation computes sight exactly: in a cube, and in
+// a box wider than tall (as the viewer makes).
+for (const aspect of [1, 1.8]) {
+  const u = makeUniverse(withDefaults({ nodes: 4000, boxGly: 5, boxAspect: aspect }));
+  const label = aspect === 1 ? 'cube' : 'wide box';
+  if (aspect !== 1) expect('wide box keeps its volume, Gly³', u.volume, 5 * 5 * 5 * aspect, 1e-6);
+  let wrongNeighbours = 0;
+  let wrongRings = 0;
+  for (let i = 0; i < u.n; i += 97) {
+    const all = Array.from({ length: u.n }, (_, j) => j).filter((j) => j !== i);
+    all.sort((a, b) => u.dist(i, a) - u.dist(i, b));
+    const got = Array.from(u.neighbors(i));
+    if (got.some((j, k) => Math.abs(u.dist(i, j) - u.dist(i, all[k])) > 1e-9)) wrongNeighbours++;
+    const want = all.filter((j) => u.dist(i, j) <= u.ringReach).length;
+    let seen = 0;
+    u.byRings(i, u.ringReach, () => seen++, () => false);
+    if (seen !== want) wrongRings++;
+  }
+  expect(`${label}: nearest neighbours match a brute-force search (mismatches)`, wrongNeighbours, 0, 0);
+  expect(`${label}: ring search finds everything within its reach (mismatches)`, wrongRings, 0, 0);
+  expect(`${label}: that reach is within a grid cell of half the shortest side`, Math.min(5, 5 * aspect) / 2 - u.ringReach < Math.cbrt(u.volume / 1000) * 1.2 ? 1 : 0, 1, 0);
+}
 
 // Two equal-rate steps: Erlang-2 CDF is 1 − e^{−λt}(1 + λt).
 const p = withDefaults({ minDelay: 0, hardSteps: [{ name: 'a', log10Rate: -1 }, { name: 'b', log10Rate: -1 }] });

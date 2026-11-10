@@ -189,7 +189,8 @@ export interface Tally {
 
 export interface SimResult {
   params: SimParams;
-  universe: { nodes: number; boxGly: number; galaxiesPerNode: number; scaleToObservable: number };
+  /** boxGly is the box's height and depth, boxX its width; exactReach how far sight is computed node by node. */
+  universe: { nodes: number; boxGly: number; boxX: number; exactReach: number; galaxiesPerNode: number; scaleToObservable: number };
   cosmology: { age: number; eventHorizonNow: number; Dinf: number };
   expectedOrigins: number;
   saturated: boolean;
@@ -257,8 +258,11 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
   const maxWindow = Math.max(...p.starClasses.map((c) => habitableWindow(p, c)));
   const table = buildStepTable(p, Math.min(maxWindow, p.tEnd) + 1);
   const sample = sampleOrigins(p, life, uni, table, rng);
-  const halfBox = uni.L / 2;
-  const boxVolume = uni.L ** 3;
+  // Exact sight reaches about half the box's shortest side, the largest sphere that doesn't
+  // wrap onto itself: exactly as far as the grid search is sure to cover, so that the
+  // far-field estimate, which starts here, leaves no shell between the two uncounted.
+  const halfBox = Math.min(Math.min(uni.L, uni.Lx) / 2, uni.ringReach);
+  const boxVolume = uni.volume;
   /** Radius of a sphere as big as one group's share of the box, comoving Gly: how far settlement spreads to fill it. */
   const groupRadius = Math.cbrt((3 * boxVolume) / (4 * Math.PI * uni.n));
 
@@ -670,7 +674,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
   };
 
   // How far away holdings in one's own galaxy group are, for seeing them.
-  const intraNode = (p.intraNodeSeeing * uni.L) / Math.cbrt(uni.n);
+  const intraNode = p.intraNodeSeeing * Math.cbrt(uni.volume / uni.n);
   const shellShare = (r: number) => Math.min(1, ((4 / 3) * Math.PI * r ** 3) / boxVolume);
   /**
    * Visit groups within `reach` of `from` that someone has ever settled. Sweeps
@@ -1109,7 +1113,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
 
   return {
     params: p,
-    universe: { nodes: uni.n, boxGly: uni.L, galaxiesPerNode: uni.galaxiesPerNode, scaleToObservable: uni.scaleToObservable },
+    universe: { nodes: uni.n, boxGly: uni.L, boxX: uni.Lx, exactReach: halfBox, galaxiesPerNode: uni.galaxiesPerNode, scaleToObservable: uni.scaleToObservable },
     cosmology: { age: cosmo.age, eventHorizonNow: cosmo.Dinf - cosmo.D(cosmo.age), Dinf: cosmo.Dinf },
     expectedOrigins: sample.expected,
     saturated: sample.saturated,

@@ -288,7 +288,7 @@ export function emergenceByClass(p: SimParams, life: Life, table: StepTable, t0:
  * success is then assigned to a node in proportion to its mass.
  */
 export function sampleOrigins(p: SimParams, life: Life, uni: Universe, table: StepTable, rng: Rng): OriginSample {
-  const boxMpc3 = Math.pow(uni.L * MPC_PER_GLY, 3);
+  const boxMpc3 = uni.volume * Math.pow(MPC_PER_GLY, 3);
   const classes: StarClass[] = p.starClasses;
   const windows = classes.map((cl) => habitableWindow(p, cl));
   const weights = classes.map((cl) => cl.frac * classWeight(p, cl));

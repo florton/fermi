@@ -17,7 +17,7 @@
 
 import { lineageSensor, maturity } from '../core/tech.ts';
 import type { SimResult } from '../core/sim.ts';
-import { FADE, cosmo, heatShade, kardashevLabel, lightFront, lineageRgb, tierName, wrapDelta, type Frame } from './state.ts';
+import { FADE, boxWidth, cosmo, heatShade, kardashevLabel, lightFront, lineageRgb, tierName, wrapDelta, type Frame } from './state.ts';
 
 export interface Slice {
   /** Centre of the depth slab, 0..1 of the box. */
@@ -151,7 +151,8 @@ export class MapView {
 
   reset() {
     if (!this.r) return;
-    this.camX = this.camY = this.r.params.boxGly / 2;
+    this.camX = boxWidth(this.r) / 2;
+    this.camY = this.r.universe.boxGly / 2;
     this.scale = this.fitScale();
     this.clamp();
     this.dirty = true;
@@ -161,8 +162,8 @@ export class MapView {
   zoomAt(cssX: number, cssY: number, factor: number) {
     const dpr = devicePixelRatio || 1;
     const [wx, wy] = this.toWorld(cssX * dpr, cssY * dpr);
-    // Never smaller than the screen: the box is shown once, filling it.
-    this.scale = Math.min(this.fitScale() * 60, Math.max(this.fitScale(), this.scale * factor));
+    // Never smaller than the whole box fitting the clear area: it is shown once.
+    this.scale = Math.min(this.maxScale(), Math.max(this.fitScale(), this.scale * factor));
     const [wx2, wy2] = this.toWorld(cssX * dpr, cssY * dpr);
     this.camX += wx - wx2;
     this.camY += wy - wy2;
@@ -182,6 +183,7 @@ export class MapView {
   resize() {
     // A hidden canvas measures 0; sizing it then would leave a 1-pixel buffer stretched when shown.
     if (this.canvas.clientWidth === 0) return;
+    const wasFit = this.atFit();
     const dpr = devicePixelRatio || 1;
     this.canvas.width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
     this.canvas.height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
@@ -193,9 +195,26 @@ export class MapView {
     this.count = new Int32Array(nCells);
     this.settled = new Int32Array(nCells);
     this.civCell = new Int32Array(nCells);
-    if (this.r) this.scale = Math.max(this.scale, this.fitScale());
+    this.refit(wasFit);
+  }
+
+  /** After the screen or the clear area changes: stay fitted if fitted, else never smaller than the fit. */
+  private refit(wasFit: boolean) {
+    if (this.r) this.scale = wasFit ? this.fitScale() : Math.max(this.scale, this.fitScale());
     this.clamp();
     this.dirty = true;
+  }
+
+  /** Whether the view is zoomed all the way out. */
+  private atFit() {
+    return !!this.r && this.scale <= this.fitScale() * 1.001;
+  }
+
+  /** Zoom by a factor about the middle of the clear area. */
+  zoomCentre(factor: number) {
+    const dpr = devicePixelRatio || 1;
+    const [ox, oy] = this.origin();
+    this.zoomAt(ox / dpr, oy / dpr, factor);
   }
 
   /** Bigger tiles merge more of the box into each one; smaller ones show finer structure. */
@@ -207,38 +226,61 @@ export class MapView {
   /** Tell the map what the panels cover, so centring on something uses the clear area between them. */
   setInsets(left: number, top: number, right: number, bottom: number) {
     // The camera point is drawn at the centre of the clear area, so it stays put.
+    const wasFit = this.atFit();
     this.insets = [left, top, right, bottom];
-    this.clamp();
-    this.dirty = true;
+    this.refit(wasFit);
+  }
+
+  /** The clear area between panels and bars, device pixels: left, top, right, bottom edges. */
+  private clear(): [number, number, number, number] {
+    const dpr = devicePixelRatio || 1;
+    const [l, t, r, b] = this.insets;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    let [x0, x1, y0, y1] = [dpr * l, W - dpr * r, dpr * t, H - dpr * b];
+    // If panels would squeeze the map to a sliver, use the whole screen on that axis instead.
+    if (x1 - x0 < 0.2 * W) [x0, x1] = [0, W];
+    if (y1 - y0 < 0.2 * H) [y0, y1] = [0, H];
+    return [x0, y0, x1, y1];
   }
 
   /** Centre of the clear area, device pixels. */
   private origin(): [number, number] {
-    const dpr = devicePixelRatio || 1;
-    const [l, t, r, b] = this.insets;
-    return [(dpr * (l - r) + this.canvas.width) / 2, (dpr * (t - b) + this.canvas.height) / 2];
+    const [x0, y0, x1, y1] = this.clear();
+    return [(x0 + x1) / 2, (y0 + y1) / 2];
   }
 
-  /** The scale at which the box just covers the whole window: shown once, no margins. */
+  /** The scale at which the whole box just fits the clear area, shown once. */
   private fitScale() {
     if (!this.r) return 1;
-    return Math.max(100, this.canvas.width, this.canvas.height) / this.r.params.boxGly;
+    const [x0, y0, x1, y1] = this.clear();
+    return Math.max(1e-3, Math.min((x1 - x0) / boxWidth(this.r), (y1 - y0) / this.r.universe.boxGly));
   }
 
-  /** Keep the box covering the window, so panning never reveals empty space past an edge. */
+  /** Closest zoom: about 60 times the box filling the whole window. */
+  private maxScale() {
+    if (!this.r) return 1;
+    return (60 * Math.max(100, this.canvas.width, this.canvas.height)) / Math.max(boxWidth(this.r), this.r.universe.boxGly);
+  }
+
+  /**
+   * Keep the box in the clear area: where it is bigger than the clear area, an
+   * edge can be panned up to the clear area's edge but not past it, so nothing is
+   * ever stuck under a panel; where it is smaller, it sits in the middle.
+   */
   private clamp() {
     if (!this.r) return;
-    const L = this.r.params.boxGly;
+    const [x0, y0, x1, y1] = this.clear();
     const [ox, oy] = this.origin();
-    const axis = (cam: number, o: number, size: number) => {
-      const lo = o / this.scale;
-      const hi = L - (size - o) / this.scale;
-      // Only if the box is narrower than the window (it shouldn't be): centre it.
-      if (lo > hi) return L / 2 + (o - size / 2) / this.scale;
-      return Math.min(hi, Math.max(lo, cam));
+    const axis = (cam: number, side: number, o: number, lo: number, hi: number) => {
+      // Screen position of world v is (v - cam) * scale + o.
+      const min = (o - lo) / this.scale; // box's near edge at the clear area's near edge
+      const max = side - (hi - o) / this.scale; // far edge at the far edge
+      if (min > max) return side / 2;
+      return Math.min(max, Math.max(min, cam));
     };
-    this.camX = axis(this.camX, ox, this.canvas.width);
-    this.camY = axis(this.camY, oy, this.canvas.height);
+    this.camX = axis(this.camX, boxWidth(this.r), ox, x0, x1);
+    this.camY = axis(this.camY, this.r.universe.boxGly, oy, y0, y1);
   }
 
   /** Call fn with a point's screen position if it is on screen. `margin` lets things that extend right/down from the point count. */
@@ -249,6 +291,29 @@ export class MapView {
 
   private nearestImage(x: number, y: number): [number, number] {
     return this.toScreen(x, y);
+  }
+
+  /** Restrict drawing to the box, for things that run past an edge and wrap. */
+  private clipToBox(ctx: CanvasRenderingContext2D, r: SimResult) {
+    const [bx, by] = this.toScreen(0, 0);
+    ctx.beginPath();
+    ctx.rect(bx, by, boxWidth(r) * this.scale, r.universe.boxGly * this.scale);
+    ctx.clip();
+  }
+
+  /**
+   * World offsets to draw something at so that the part past an edge shows up
+   * from the opposite edge: none if (px, py) is inside the box, else one shift
+   * per axis it has left by, and both together.
+   */
+  private wrapImages(px: number, py: number, Lx: number, L: number): [number, number][] {
+    const sx = px < 0 ? Lx : px >= Lx ? -Lx : 0;
+    const sy = py < 0 ? L : py >= L ? -L : 0;
+    const out: [number, number][] = [[0, 0]];
+    if (sx) out.push([sx, 0]);
+    if (sy) out.push([0, sy]);
+    if (sx && sy) out.push([sx, sy]);
+    return out;
   }
 
   private toScreen(x: number, y: number): [number, number] {
@@ -427,7 +492,7 @@ export class MapView {
     ctx.strokeStyle = '#1d2230';
     ctx.lineWidth = 1;
     const [bx, by] = this.toScreen(0, 0);
-    ctx.strokeRect(bx, by, L * this.scale, L * this.scale);
+    ctx.strokeRect(bx, by, boxWidth(r) * this.scale, L * this.scale);
 
     if (layers.strikes) this.drawStrikes(ctx, r, frame, selLineage, slice, lod);
     if (layers.species) this.drawSpecies(ctx, r, frame, slice, lod);
@@ -442,9 +507,14 @@ export class MapView {
    */
   private lod(slice: Slice): number {
     if (!this.r) return FAR;
-    const inView = this.r.positions.x.length * Math.min(1, slice.width);
-    const spacing = ((this.r.params.boxGly / Math.sqrt(Math.max(1, inView))) * this.scale) / this.cell;
+    const spacing = (this.groupSpacing(this.r, slice) * this.scale) / this.cell;
     return spacing >= 1.4 ? NEAR : spacing >= 0.45 ? MID : FAR;
+  }
+
+  /** Typical distance between neighbouring groups in the slab as seen from above, Gly. */
+  private groupSpacing(r: SimResult, slice: Slice): number {
+    const inView = r.positions.x.length * Math.min(1, slice.width);
+    return Math.sqrt((boxWidth(r) * r.universe.boxGly) / Math.max(1, inView));
   }
 
   /** Up close: each galaxy group in the slab as a disc sized by its mass; held ones ringed in their lineage's colour and filled as their starlight turns to waste heat. */
@@ -453,8 +523,7 @@ export class MapView {
     const L = r.params.boxGly;
     const lineageOf = r.polities.lineage;
     const dpr = devicePixelRatio || 1;
-    const inView = x.length * Math.min(1, slice.width);
-    const spacingPx = (L / Math.sqrt(Math.max(1, inView))) * this.scale;
+    const spacingPx = this.groupSpacing(r, slice) * this.scale;
     const base = Math.min(this.cell * 0.45, spacingPx * 0.28);
     const W = this.canvas.width;
     const H = this.canvas.height;
@@ -495,26 +564,40 @@ export class MapView {
     const dot = this.cell * 0.18;
     ctx.lineWidth = far ? 1 : Math.max(1, this.cell / 8);
     ctx.font = `${this.cell}px ${MONO}`;
+    const Lx = boxWidth(r);
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const pad = this.cell;
+    ctx.save();
+    this.clipToBox(ctx, r);
     for (const { s, f } of frame.inFlight) {
       if (!inSlice(z[st.from[s]], L, slice) && !inSlice(z[st.to[s]], L, slice)) continue;
       const a = st.from[s];
       const b = st.to[s];
-      // Head offset in screen units, along the short way round the wrap.
-      const hx = f * wrapDelta(x[a], x[b], L) * this.scale;
-      const hy = f * wrapDelta(y[a], y[b], L) * this.scale;
+      // The head, along the short way round the wrap, in world units and possibly past an edge.
+      const ex = x[a] + f * wrapDelta(x[a], x[b], Lx);
+      const ey = y[a] + f * wrapDelta(y[a], y[b], L);
       const [cr, cg, cb] = lineageRgb(st.lineage[s]);
       const dim = sel >= 0 && st.lineage[s] !== sel && st.victim[s] !== sel ? 0.25 : 1;
       ctx.strokeStyle = `rgba(${cr},${cg},${cb},${(far ? 0.35 : 0.6) * dim})`;
       ctx.fillStyle = `rgba(255,255,255,${(far ? 0.7 : 1) * dim})`;
-      this.eachImage(x[a], y[a], (sx, sy) => {
+      // A trail that crosses an edge carries on from the opposite one.
+      for (const [wx, wy] of this.wrapImages(ex, ey, Lx, L)) {
+        const [sx, sy] = this.toScreen(x[a] + wx, y[a] + wy);
+        const [hx, hy] = this.toScreen(ex + wx, ey + wy);
+        // Drawn whenever any of the trail is on screen, not only its launch point,
+        // so zooming in on the head of a strike doesn't lose it.
+        if (Math.max(sx, hx) < -pad || Math.min(sx, hx) > W + pad) continue;
+        if (Math.max(sy, hy) < -pad || Math.min(sy, hy) > H + pad) continue;
         ctx.beginPath();
         ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + hx, sy + hy);
+        ctx.lineTo(hx, hy);
         ctx.stroke();
-        if (far) ctx.fillRect(sx + hx - dot / 2, sy + hy - dot / 2, dot, dot);
-        else ctx.fillText('•', sx + hx, sy + hy);
-      });
+        if (far) ctx.fillRect(hx - dot / 2, hy - dot / 2, dot, dot);
+        else ctx.fillText('•', hx, hy);
+      }
     }
+    ctx.restore();
     for (const { s, age } of frame.impacts) {
       const b = st.to[s];
       if (!inSlice(z[b], L, slice)) continue;
@@ -694,37 +777,65 @@ export class MapView {
 
   private drawSelection(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, civId: number) {
     const c = r.civs[civId];
-    const L = r.params.boxGly;
+    const L = r.universe.boxGly;
+    const Lx = boxWidth(r);
     const { x, y } = r.positions;
     const [ox, oy] = this.nearestImage(x[c.node], y[c.node]);
     const dpr = devicePixelRatio || 1;
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
     ctx.save();
     ctx.lineWidth = dpr;
     ctx.font = `${Math.round(11 * dpr)}px system-ui, sans-serif`;
     ctx.textAlign = 'left';
+    /** Text kept on screen. */
+    const note = (text: string, tx: number, ty: number) => {
+      const tw = ctx.measureText(text).width;
+      ctx.fillText(text, Math.max(4 * dpr, Math.min(tx, cw - tw - 8 * dpr)), Math.max(20 * dpr, Math.min(ty, ch - 60 * dpr)));
+    };
+    /** A ring about home, clipped to the box and carried on round its edges. */
+    const ring = (radius: number) => {
+      ctx.save();
+      this.clipToBox(ctx, r);
+      ctx.beginPath();
+      for (let i = -1; i <= 1; i++)
+        for (let j = -1; j <= 1; j++) {
+          const cx = ox + i * Lx * this.scale;
+          const cy = oy + j * L * this.scale;
+          ctx.moveTo(cx + radius, cy);
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        }
+      ctx.stroke();
+      ctx.restore();
+    };
     // What they could see when they first looked up.
     if (frame.t >= c.tTech && this.sight.length) {
+      ctx.save();
+      this.clipToBox(ctx, r);
       ctx.strokeStyle = 'rgba(255,170,90,0.35)';
+      ctx.beginPath();
       for (const { node } of this.sight) {
-        const tx = ox + wrapDelta(x[c.node], x[node], L) * this.scale;
-        const ty = oy + wrapDelta(y[c.node], y[node], L) * this.scale;
-        ctx.beginPath();
-        ctx.moveTo(ox, oy);
-        ctx.lineTo(tx, ty);
-        ctx.stroke();
+        const ex = x[c.node] + wrapDelta(x[c.node], x[node], Lx);
+        const ey = y[c.node] + wrapDelta(y[c.node], y[node], L);
+        for (const [wx, wy] of this.wrapImages(ex, ey, Lx, L)) {
+          const [sx, sy] = this.toScreen(x[c.node] + wx, y[c.node] + wy);
+          const [tx, ty] = this.toScreen(ex + wx, ey + wy);
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(tx, ty);
+        }
       }
+      ctx.stroke();
+      ctx.restore();
     }
     // How far the news of this species' birth has travelled.
     const front = lightFront(c.tTech, frame.t) * this.scale;
     if (front > 0) {
       ctx.setLineDash([4 * dpr, 4 * dpr]);
       ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-      ctx.beginPath();
-      ctx.arc(ox, oy, front, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.fillText('light of their first radio', ox + front * 0.71 + 4, oy - front * 0.71);
+      ring(front);
       ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      if (front < Math.max(Lx, L) * this.scale) note('light of their first radio', ox + front * 0.71 + 4, oy - front * 0.71);
     }
     // How far their telescopes pick out the faintest heat they can tell from dust.
     if (maturity(c.tierTimes, frame.t) >= 0 && frame.held[civId] > 0) {
@@ -734,19 +845,11 @@ export class MapView {
       const [cr, cg, cb] = lineageRgb(civId);
       const pct = `${s.contrast * 100 >= 1 ? (s.contrast * 100).toFixed(0) : (s.contrast * 100).toFixed(1)}%`;
       ctx.fillStyle = `rgba(${cr},${cg},${cb},0.8)`;
-      if (gly < L) {
+      if (gly < Math.max(Lx, L)) {
         ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.5)`;
-        ctx.beginPath();
-        ctx.arc(ox, oy, range, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillText(`sees waste heat ≥ ${pct} of starlight to here`, ox + range * 0.71 + 4, oy + range * 0.71);
-      } else {
-        const text = `sees waste heat ≥ ${pct} of starlight across the whole box`;
-        const tw = ctx.measureText(text).width;
-        const cw = this.canvas.width;
-        const ch = this.canvas.height;
-        ctx.fillText(text, Math.max(4 * dpr, Math.min(ox + 14 * dpr, cw - tw - 8 * dpr)), Math.max(20 * dpr, Math.min(oy + 18 * dpr, ch - 60 * dpr)));
-      }
+        ring(range);
+        note(`sees waste heat ≥ ${pct} of starlight to here`, ox + range * 0.71 + 4, oy + range * 0.71);
+      } else note(`sees waste heat ≥ ${pct} of starlight across the whole box`, ox + 14 * dpr, oy + 18 * dpr);
     }
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';

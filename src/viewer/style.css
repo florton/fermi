@@ -168,6 +168,27 @@ body:not(.panels-hidden) .map-key {
   right: 360px;
 }
 
+/* Full map: where the browser won't go full screen, the map takes the whole window instead. */
+.exit-map-only {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: none;
+  background: rgba(13, 16, 24, 0.8);
+  font-size: 12px;
+}
+
+body.map-only .exit-map-only {
+  display: block;
+}
+
+body.map-only .topbar,
+body.map-only .panel,
+body.map-only .map-key {
+  display: none !important;
+}
+
 .tip {
   position: fixed;
   pointer-events: none;

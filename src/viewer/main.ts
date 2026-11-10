@@ -20,7 +20,8 @@ import { Timeline } from './timeline.ts';
 const FIELDS: [key: string, label: string, step: number][] = [
   ['seed', 'Seed', 1],
   ['nodes', 'Galaxy groups', 1000],
-  ['boxGly', 'Box side, Gly', 0.5],
+  ['boxGly', 'Box height and depth, Gly', 0.5],
+  ['boxAspect', 'Box width ÷ height (set from the window)', 0.05],
   ['tEnd', 'End time, Gyr', 1],
   ['hardStepLog10', 'Hard steps, log₁₀ rate/Gyr', 0.1],
   ['habitablePerMsun', 'Habitable planets per solar mass', 0.01],
@@ -104,12 +105,28 @@ for (const [key, label, step] of FIELDS) {
 const field = (key: string) => $<HTMLInputElement>(`f-${key}`);
 const sizeSel = $<HTMLSelectElement>('size');
 const spanSel = $<HTMLSelectElement>('span');
-/** Universe size and run length live in the top bar; they write into the same fields the dialog shows. */
+/** Set by typing into the box or node fields, so Run keeps those instead of reshaping the box to the window. */
+let boxByHand = false;
+/**
+ * Universe size and run length live in the top bar; they write into the same
+ * fields the dialog shows. The box keeps the volume of the cube the size names
+ * but takes the window's shape, so zoomed out it fills the screen once.
+ */
 function applySizeAndSpan() {
-  const [box, nodes] = sizeSel.value.split(',');
-  field('boxGly').value = box;
-  field('nodes').value = nodes;
+  const [side, nodes] = sizeSel.value.split(',').map(Number);
+  const aspect = windowAspect();
+  field('boxGly').value = (side / Math.cbrt(aspect)).toFixed(2);
+  field('boxAspect').value = String(aspect);
+  field('nodes').value = String(nodes);
   field('tEnd').value = spanSel.value;
+  boxByHand = false;
+}
+/** Width ÷ height of the map between the top and bottom bars (and the key above the bottom one), to two places. */
+function windowAspect(): number {
+  const [top, bottom] = barInsets();
+  const h = innerHeight - top - bottom;
+  const a = h > 50 ? innerWidth / h : 1;
+  return Math.round(100 * Math.min(3, Math.max(0.5, a))) / 100;
 }
 // ── Universe: which kinds of civilisation can arise, and what nature is like ──
 const universeEl = $('universe');
@@ -196,7 +213,11 @@ sizeSel.onchange = spanSel.onchange = () => {
   applySizeAndSpan();
   markStale();
 };
-paramsEl.oninput = () => markStale();
+paramsEl.oninput = (e) => {
+  const name = (e.target as HTMLInputElement).name;
+  if (name === 'boxGly' || name === 'boxAspect' || name === 'nodes') boxByHand = true;
+  markStale();
+};
 $('open-params').onclick = () => dialog.showModal();
 
 function readParams(): Partial<SimParams> {
@@ -223,6 +244,7 @@ layersEl.onchange = (e) => {
   if (!input.dataset.layer) return;
   layers[input.dataset.layer as keyof Layers] = input.checked;
   $('map-key').hidden = !layers.key;
+  updateInsets();
   map.dirty = true;
 };
 layersEl.oninput = (e) => {
@@ -268,7 +290,8 @@ map.onHover = (html, x, y) => {
   tip.innerHTML = html;
   tip.hidden = false;
   tip.style.left = `${Math.min(x + 14, innerWidth - 270)}px`;
-  tip.style.top = `${y + 14}px`;
+  // Flip above the cursor near the bottom, so it isn't cut off or hidden behind the time bar.
+  tip.style.top = `${y + 14 + tip.offsetHeight > innerHeight - 60 ? Math.max(4, y - 10 - tip.offsetHeight) : y + 14}px`;
 };
 timeline.onScrub = (tt) => setTime(tt);
 
@@ -323,6 +346,8 @@ worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
 let chronicleLength = -1;
 
 function simulate() {
+  // The window may have changed shape since the size was picked.
+  if (!boxByHand) applySizeAndSpan();
   simulating = true;
   stale = false;
   simT = 0;
@@ -397,19 +422,64 @@ $('recenter').onclick = () => map.reset();
 $('fullscreen').onclick = () => toggleFullscreen();
 $('toggle-panels').onclick = () => cyclePanels();
 
+/**
+ * Full screen if the browser allows it. Where it doesn't (an embedded page, a
+ * browser pane, a site without the permission), the map takes the whole
+ * window instead, with the bars and panels tucked away.
+ */
 function toggleFullscreen() {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen().catch(() => {});
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
+  if (document.body.classList.contains('map-only')) {
+    setMapOnly(false);
+    return;
+  }
+  const el = document.documentElement;
+  if (!document.fullscreenEnabled || !el.requestFullscreen) {
+    setMapOnly(true);
+    return;
+  }
+  // Some embedded browsers neither grant nor refuse, and the request just hangs; don't wait on it.
+  const fallback = setTimeout(() => !document.fullscreenElement && setMapOnly(true), 500);
+  el.requestFullscreen().then(
+    () => clearTimeout(fallback),
+    () => {
+      clearTimeout(fallback);
+      if (!document.fullscreenElement) setMapOnly(true);
+    },
+  );
+}
+function setMapOnly(on: boolean) {
+  document.body.classList.toggle('map-only', on);
+  universeEl.hidden = layersEl.hidden = true;
+  tip.hidden = true;
+  onResize();
+}
+$('exit-map-only').onclick = () => setMapOnly(false);
+document.addEventListener('fullscreenchange', () => {
+  // Real full screen arrived after all: no need for the stand-in too.
+  if (document.fullscreenElement) document.body.classList.remove('map-only');
+  $('fullscreen').title = document.fullscreenElement ? 'Leave full screen (F or Esc)' : 'Full screen (F)';
+});
+
+/** Where an element sits on screen, or null if it isn't shown. A function declaration, since the size menu needs it before this point. */
+function rectOf(id: string): DOMRect | null {
+  const el = $(id);
+  return getComputedStyle(el).display === 'none' ? null : el.getBoundingClientRect();
+}
+/** Screen height covered by the top bar, and at the bottom by the time bar and the symbol key just above it. */
+function barInsets(): [number, number] {
+  const top = rectOf('top-bar')?.bottom ?? 0;
+  const key = rectOf('map-key');
+  const bottom = innerHeight - Math.min(rectOf('time-bar')?.top ?? innerHeight, key && key.height > 0 ? key.top : Infinity);
+  return [top, bottom];
 }
 
 /** Tell the map which parts of the screen are covered, so it fits into the clear area. */
 function updateInsets() {
-  const rectOf = (id: string) => {
-    const el = $(id);
-    return getComputedStyle(el).display === 'none' ? null : el.getBoundingClientRect();
-  };
-  const top = $('top-bar').getBoundingClientRect().bottom;
-  const bottom = innerHeight - $('time-bar').getBoundingClientRect().top;
+  const [top, bottom] = barInsets();
   if (innerWidth <= 900) {
     // Narrow: panels sit at the bottom and are toggled; fit above the open one.
     const open = rectOf('left') ?? rectOf('right');
@@ -497,14 +567,17 @@ window.addEventListener(
 
 window.addEventListener('keydown', (e) => {
   if (typing(e.target) || e.target instanceof HTMLInputElement) return;
-  if (e.key === 'Escape') select(-1);
+  if (e.key === 'Escape') {
+    if (document.body.classList.contains('map-only')) setMapOnly(false);
+    else select(-1);
+  }
   else if (e.key === 'Tab') {
     e.preventDefault();
     cyclePanels();
   } else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
   else if (e.key === '0') map.reset();
-  else if (e.key === '+' || e.key === '=') map.zoomAt(innerWidth / 2, innerHeight / 2, 1.25);
-  else if (e.key === '-') map.zoomAt(innerWidth / 2, innerHeight / 2, 0.8);
+  else if (e.key === '+' || e.key === '=') map.zoomCentre(1.25);
+  else if (e.key === '-') map.zoomCentre(0.8);
   else if (e.key === 'ArrowRight' && result) setTime(t + result.params.tEnd / 200);
   else if (e.key === 'ArrowLeft' && result) setTime(t - result.params.tEnd / 200);
 });
