@@ -4,13 +4,15 @@
  *
  *   expansionism  benefit: spreads at all, and launches sooner
  *                 cost:    nothing directly — its cost is exposure
- *   speed         benefit: faster probes, reaches more before the horizon closes
- *                 cost:    each launch takes longer to prepare
+ *   speed         benefit: faster probes, reaches more before the horizon closes,
+ *                          and fills a group sooner
+ *                 cost:    each launch takes longer to prepare, steeply near light
+ *                          speed (shielding and braking grow with γ − 1)
  *   aggression    benefit: takes settled nodes instead of bouncing off them
  *                 cost:    polities collapse faster; provokes retaliation
  *   stealth       benefit: less visible, less often attacked
- *                 cost:    hides its own energy use, so weaker in a fight and slower to launch
- *                          (scaled by params.stealthCost)
+ *                 cost:    hides its own energy use, so brings less force to a fight and
+ *                          launches more slowly (scaled by params.stealthCost)
  *   caution       benefit: survives its technological adolescence more often
  *                 cost:    slower to become spacefaring, slower to launch
  *   inwardness    transcension as a strategy rather than a destiny: invest in
@@ -30,8 +32,8 @@
  *                 params.restraintCap = 0 removes the option.
  *   unity         above 0.5, two lineages that meet and are both communal form an
  *                 alliance
- *                 benefit: allies never fight each other and count their combined
- *                          size in any war
+ *                 benefit: allies never fight each other, and allied holdings next
+ *                          door add their power in any war
  *                 cost:    never settle or take an ally's holdings, so they give
  *                          up room to grow
  *
@@ -74,7 +76,7 @@ export function genomeDistance(a: Genome, b: Genome): number {
   return Math.sqrt(s / N_TRAITS);
 }
 
-/** Strength in a contested node. `stealthCost` scales how much hiding weakens it (1 = default, 0 = free). */
+/** Share of its power a polity brings to a fight. `stealthCost` scales how much hiding weakens it (1 = default, 0 = free). */
 export function power(g: Genome, stealthCost: number): number {
   return (1 - 0.6 * stealthCost * g[STEALTH]) * (1 - 0.4 * g[INWARDNESS]) * (0.5 + g[AGGRESSION]);
 }

@@ -111,7 +111,7 @@ try {
   }
 
   // Mid-run, while empires are still growing into empty space and meeting.
-  const T = 10.5;
+  const T = 7;
   await runTo('baseline', '12,120000', T);
 
   // 1. The whole box.

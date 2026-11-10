@@ -17,6 +17,19 @@
  * the cosmic event horizon: there are galaxies that nothing launched today will
  * ever reach, at any speed. The simulation does not impose that limit — it falls
  * out of this table.
+ *
+ * Probes don't keep their speed. Something coasting through an expanding
+ * universe loses momentum relative to the galaxies it passes, p ∝ 1/a (the same
+ * stretching that redshifts light), so a probe launched at γβ = u₀ has
+ * γβ = u₀·a₀/a later. Its comoving momentum U = u₀·a₀ is conserved, and the
+ * comoving distance it covers is
+ *
+ *   χ(t) = ∫ U dt' / (a √(a² + U²))
+ *
+ * which tends to D(t) as U → ∞ (light) and to U ∫ dt'/a² for slow probes. A slow
+ * probe launched early reaches far less than v·D suggests, and every probe has
+ * a finite reach even before dark energy closes the horizon. `coast` tabulates
+ * this per value of U.
  */
 
 /** km/s/Mpc → 1/Gyr. */
@@ -40,6 +53,12 @@ export interface Cosmology {
    * comoving distance d. Infinity if it never does — beyond the event horizon.
    */
   arrival(t0: number, d: number, v: number): number;
+  /**
+   * When a probe launched at `t0` at speed v (fraction of c, relative to the
+   * galaxies around it) and then coasting arrives at comoving distance d.
+   * Infinity if it never does.
+   */
+  coast(t0: number, d: number, v: number): number;
   /** When light that arrives at `t1` from comoving distance d was emitted. -1 if before t = 0. */
   emission(t1: number, d: number): number;
   /**
@@ -169,6 +188,69 @@ export function makeCosmology(p: CosmologyParams = PLANCK18, tMax = 200): Cosmol
     return cumSF[i] + (x - i) * (cumSF[i + 1] - cumSF[i]);
   };
 
+  // ── Coasting ─────────────────────────────────────────────────────────────
+  // One table per value of the conserved comoving momentum U, log-spaced, each on
+  // a coarser s-grid than D and built on first use.
+  const CN = 2000;
+  const cds = sMax / CN;
+  const U_LOG_MIN = -5;
+  const U_PER_DECADE = 16;
+  const U_N = 8 * U_PER_DECADE + 1; // 1e-5 .. 1e3
+  const coastTables: (Float64Array | undefined)[] = new Array(U_N);
+  const coastTable = (i: number) => {
+    let tab = coastTables[i];
+    if (tab) return tab;
+    const U = Math.pow(10, U_LOG_MIN + i / U_PER_DECADE);
+    tab = new Float64Array(CN + 1);
+    // In s = t^(1/3), dt = 3s² ds; a ~ s² near 0 so the integrand stays finite.
+    const f = (s: number) => {
+      if (s === 0) return 3 / (k * Math.pow(w, 2 / 3));
+      const aa = a(s * s * s);
+      return (3 * s * s * U) / (aa * Math.sqrt(aa * aa + U * U));
+    };
+    for (let j = 1; j <= CN; j++) {
+      const s0 = (j - 1) * cds;
+      const s1 = j * cds;
+      tab[j] = tab[j - 1] + (cds / 6) * (f(s0) + 4 * f(0.5 * (s0 + s1)) + f(s1));
+    }
+    coastTables[i] = tab;
+    return tab;
+  };
+  /** Arrival time on table i: when its χ has grown by d since t0. */
+  const coastOn = (i: number, t0: number, d: number) => {
+    const tab = coastTable(i);
+    const x0 = Math.min(CN, Math.cbrt(Math.max(0, t0)) / cds);
+    const j0 = Math.min(CN - 1, Math.floor(x0));
+    const target = tab[j0] + (x0 - j0) * (tab[j0 + 1] - tab[j0]) + d;
+    if (target > tab[CN]) return Infinity;
+    let lo = j0;
+    let hi = CN;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (tab[mid] < target) lo = mid;
+      else hi = mid;
+    }
+    const s = (lo + (target - tab[lo]) / (tab[hi] - tab[lo])) * cds;
+    return s * s * s;
+  };
+  const coast = (t0: number, d: number, v: number) => {
+    if (d <= 0) return t0;
+    if (v >= 0.9999) return tOfD(D(t0) + d);
+    if (v <= 0) return Infinity;
+    const U = (v / Math.sqrt(1 - v * v)) * a(t0);
+    const x = (Math.log10(U) - U_LOG_MIN) * U_PER_DECADE;
+    if (x >= U_N - 1) return tOfD(D(t0) + d);
+    if (x <= 0) return coastOn(0, t0, d);
+    // Interpolate the arrival time between the two neighbouring tables.
+    const i = Math.floor(x);
+    const fr = x - i;
+    const tLo = coastOn(i, t0, d);
+    const tHi = coastOn(i + 1, t0, d);
+    if (tHi === Infinity) return Infinity;
+    if (tLo === Infinity) return fr > 0.5 ? tHi : Infinity;
+    return tLo + fr * (tHi - tLo);
+  };
+
   return {
     age,
     a,
@@ -176,6 +258,7 @@ export function makeCosmology(p: CosmologyParams = PLANCK18, tMax = 200): Cosmol
     tOfD,
     Dinf,
     arrival: (t0, d, v) => tOfD(D(t0) + d / v),
+    coast,
     emission: (t1, d) => {
       const x = D(t1) - d;
       return x < 0 ? -1 : tOfD(x);

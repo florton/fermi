@@ -15,9 +15,9 @@
  * under the cursor, otherwise the lineage with most of that cell.
  */
 
-import { TIERS, tierAt } from '../core/tech.ts';
+import { lineageSensor, maturity } from '../core/tech.ts';
 import type { SimResult } from '../core/sim.ts';
-import { FADE, lightFront, lineageRgb, tierName, wrapDelta, type Frame } from './state.ts';
+import { FADE, cosmo, heatShade, kardashevLabel, lightFront, lineageRgb, tierName, wrapDelta, type Frame } from './state.ts';
 
 export interface Slice {
   /** Centre of the depth slab, 0..1 of the box. */
@@ -52,6 +52,14 @@ export const FAR = 0;
 export const MID = 1;
 export const NEAR = 2;
 
+/** A lineage's tiles on screen: how many, how many groups, and their screen positions summed by groups. */
+interface LabelSpot {
+  cells: number;
+  w: number;
+  sx: number;
+  sy: number;
+}
+
 export class MapView {
   readonly canvas: HTMLCanvasElement;
   onPick: (civ: number) => void = () => {};
@@ -80,6 +88,10 @@ export class MapView {
   /** Screen space covered by floating panels and bars, CSS pixels: left, top, right, bottom. */
   private insets = [0, 0, 0, 0];
   private meanMass = 1;
+  /** Lineages named in the last frame, so names don't swap in and out between frames. */
+  private labelsShown = new Set<number>();
+  /** Where each of those names sat, in world coordinates, so it can stay put while the camera moves. */
+  private labelWorld = new Map<number, [number, number]>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -277,7 +289,7 @@ export class MapView {
     if (this.count[c] > 0) {
       if (this.settled[c] > 0) {
         const lin = r.polities.lineage[this.vote[c]];
-        lines.push(`<b>${r.civs[lin].name}</b> · ${tierName(r, lin, this.last.t)}`);
+        lines.push(`<b>${r.civs[lin].name}</b> · ${tierName(r, lin, this.last.t)} · ${kardashevLabel(r, this.last, lin)}`);
       }
       lines.push(`${this.count[c]} galaxy group${this.count[c] > 1 ? 's' : ''}`);
     }
@@ -309,7 +321,7 @@ export class MapView {
     this.settled.fill(0);
     this.civCell.fill(-1);
     const voteCount = new Int32Array(this.count.length);
-    const lumSum = new Float32Array(this.count.length);
+    const heatSum = new Float32Array(this.count.length);
     const hasSel = new Uint8Array(this.count.length);
     const bin = (sx: number, sy: number, i: number) => {
       const c = Math.floor(sy / cell) * cols + Math.floor(sx / cell);
@@ -317,7 +329,7 @@ export class MapView {
       const o = frame.owner[i];
       if (o < 0) return;
       this.settled[c]++;
-      lumSum[c] += frame.lum[i];
+      heatSum[c] += heatShade(frame.heat[i]);
       if (lineageOf[o] === selLineage) {
         hasSel[c] = 1;
         this.vote[c] = o;
@@ -352,8 +364,8 @@ export class MapView {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = `${cell}px ${MONO}`;
-    // Largest cell of each lineage on screen, for labels.
-    const labelAt = new Map<number, { c: number; n: number; cells: number }>();
+    // Each lineage's on-screen extent, for labels: tiles held and their centre of mass.
+    const labelAt = new Map<number, LabelSpot>();
     for (let c = 0; c < nCells; c++) {
       const n = this.count[c];
       if (n === 0) continue;
@@ -373,17 +385,17 @@ export class MapView {
         continue;
       }
       const lin = cellLin[c];
-      const best = labelAt.get(lin);
-      if (!best) labelAt.set(lin, { c, n: this.settled[c], cells: 1 });
+      const w = this.settled[c];
+      const spot = labelAt.get(lin);
+      if (!spot) labelAt.set(lin, { cells: 1, w, sx: w * (x0 + cell / 2), sy: w * (y0 + cell / 2) });
       else {
-        best.cells++;
-        if (this.settled[c] > best.n) {
-          best.c = c;
-          best.n = this.settled[c];
-        }
+        spot.cells++;
+        spot.w += w;
+        spot.sx += w * (x0 + cell / 2);
+        spot.sy += w * (y0 + cell / 2);
       }
       if (!layers.territory) continue;
-      const heat = Math.min(1, Math.sqrt(lumSum[c] / this.settled[c]));
+      const heat = heatSum[c] / this.settled[c];
       const [cr, cg, cb] = lineageRgb(lin);
       const dim = selLineage >= 0 && !hasSel[c] ? 0.18 : 1;
       if (lod === NEAR) {
@@ -419,7 +431,7 @@ export class MapView {
 
     if (layers.strikes) this.drawStrikes(ctx, r, frame, selLineage, slice, lod);
     if (layers.species) this.drawSpecies(ctx, r, frame, slice, lod);
-    if (layers.labels) this.drawLabels(ctx, r, labelAt, selLineage, lod);
+    if (layers.labels) this.drawLabels(ctx, r, labelAt, cellLin, selLineage, lod);
     if (selected >= 0 && layers.reach) this.drawSelection(ctx, r, frame, selected);
   }
 
@@ -466,7 +478,7 @@ export class MapView {
         const lin = lineageOf[o];
         const [cr, cg, cb] = lineageRgb(lin);
         const dim = sel >= 0 && lin !== sel ? 0.25 : 1;
-        const heat = Math.min(1, Math.sqrt(frame.lum[i]));
+        const heat = heatShade(frame.heat[i]);
         ctx.fillStyle = `rgba(${cr},${cg},${cb},${(dim * (0.12 + 0.8 * heat)).toFixed(3)})`;
         ctx.fill();
         ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.9 * dim})`;
@@ -574,25 +586,110 @@ export class MapView {
     }
   }
 
-  private drawLabels(ctx: CanvasRenderingContext2D, r: SimResult, labelAt: Map<number, { c: number; n: number; cells: number }>, sel: number, lod: number) {
+  /**
+   * Names for the larger territories on screen. Kept steady from frame to frame:
+   * each sits at its territory's core (the tile with the most of its own tiles
+   * around it) and stays exactly where it was for as long as that spot is still
+   * theirs and still fairly central, names already showing keep their place
+   * ahead of newcomers of about the same size, and a name that would overlap one
+   * already placed is left out rather than drawn on top.
+   */
+  private drawLabels(ctx: CanvasRenderingContext2D, r: SimResult, labelAt: Map<number, LabelSpot>, cellLin: Int32Array, sel: number, lod: number) {
     const dpr = devicePixelRatio || 1;
-    // Only territories big enough to read, largest first; closer in, smaller ones get names too.
     const minCells = [25, 10, 4][lod];
-    const big = [...labelAt].filter(([, v]) => v.cells >= minCells).sort((a, b) => b[1].cells - a[1].cells).slice(0, lod === NEAR ? 24 : 12);
+    const limit = lod === NEAR ? 24 : 12;
+    const shown = this.labelsShown;
+    // Names already showing count as half again as big, and stay until well under the threshold.
+    const score = (lin: number, cells: number) => (shown.has(lin) ? 1.5 * cells : cells);
+    const candidates = [...labelAt]
+      .filter(([lin, v]) => (sel < 0 || lin === sel) && v.cells >= (shown.has(lin) ? 0.6 * minCells : minCells))
+      .sort((a, b) => score(b[0], b[1].cells) - score(a[0], a[1].cells))
+      .slice(0, 2 * limit);
+
+    // Anchor each name at the core of its territory: a tile with nearly as many
+    // of its own tiles around it as the densest one. Of those, the one nearest
+    // where the name was last frame, or, for a new name, nearest the centre of mass.
+    const cell = this.cell;
+    const cols = this.cols;
+    const rows = Math.ceil(cellLin.length / cols);
+    const R = 2;
+    const density = (c: number, lin: number) => {
+      const cx = c % cols;
+      const cy = Math.floor(c / cols);
+      let n = 0;
+      for (let y = Math.max(0, cy - R); y <= Math.min(rows - 1, cy + R); y++)
+        for (let x = Math.max(0, cx - R); x <= Math.min(cols - 1, cx + R); x++) if (cellLin[y * cols + x] === lin) n++;
+      return n;
+    };
+    const want = new Map<number, { ax: number; ay: number; best: number; dist: number; c: number }>();
+    for (const [lin, v] of candidates) {
+      const prev = this.labelWorld.get(lin);
+      const [ax, ay] = prev ? this.toScreen(prev[0], prev[1]) : [v.sx / v.w, v.sy / v.w];
+      want.set(lin, { ax, ay, best: -1, dist: Infinity, c: -1 });
+    }
+    const centre = (c: number): [number, number] => [(c % cols) * cell + cell / 2, Math.floor(c / cols) * cell + cell / 2];
+    const dens = new Int16Array(cellLin.length);
+    for (let c = 0; c < cellLin.length; c++) {
+      const lin = cellLin[c];
+      const w = want.get(lin);
+      if (!w) continue;
+      dens[c] = density(c, lin);
+      if (dens[c] > w.best) w.best = dens[c];
+    }
+    // Of the tiles dense enough to count as core, the one nearest the old spot,
+    // so a name that loses its place moves a little rather than across the map.
+    for (let c = 0; c < cellLin.length; c++) {
+      const w = want.get(cellLin[c]);
+      if (!w || dens[c] < 0.6 * w.best) continue;
+      const [x, y] = centre(c);
+      const dist = (x - w.ax) ** 2 + (y - w.ay) ** 2;
+      if (dist < w.dist) {
+        w.dist = dist;
+        w.c = c;
+      }
+    }
+    /** Screen spot for a name: where it was, if that is still theirs and still near their core; else the core. */
+    const spotFor = (lin: number): [number, number] => {
+      const w = want.get(lin)!;
+      const prev = this.labelWorld.get(lin);
+      if (prev) {
+        const [px, py] = this.toScreen(prev[0], prev[1]);
+        const gx = Math.floor(px / cell);
+        const gy = Math.floor(py / cell);
+        if (gx >= 0 && gy >= 0 && gx < cols && gy < rows) {
+          const pc = gy * cols + gx;
+          if (cellLin[pc] === lin && density(pc, lin) >= 0.6 * w.best) return [px, py];
+        }
+      }
+      return centre(w.c);
+    };
+
     ctx.font = `600 ${Math.round(12 * dpr)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const [lin, { c }] of big) {
-      if (sel >= 0 && lin !== sel) continue;
-      const cx = (c % this.cols) * this.cell + this.cell / 2;
-      const cy = Math.floor(c / this.cols) * this.cell + this.cell / 2;
+    const placed: [number, number, number, number][] = [];
+    const h = 16 * dpr;
+    const next = new Set<number>();
+    const nextWorld = new Map<number, [number, number]>();
+    for (const [lin] of candidates) {
+      if (next.size >= limit) break;
+      if (want.get(lin)!.c < 0) continue;
+      const [cx, cy] = spotFor(lin);
       const name = r.civs[lin].name;
+      const half = ctx.measureText(name).width / 2 + 4 * dpr;
+      const box: [number, number, number, number] = [cx - half, cy - h / 2, cx + half, cy + h / 2];
+      if (placed.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
+      placed.push(box);
+      next.add(lin);
+      nextWorld.set(lin, this.toWorld(cx, cy));
       ctx.lineWidth = 4 * dpr;
       ctx.strokeStyle = 'rgba(5,6,10,0.85)';
       ctx.strokeText(name, cx, cy);
       ctx.fillStyle = `rgb(${lineageRgb(lin).join(',')})`;
       ctx.fillText(name, cx, cy);
     }
+    this.labelsShown = next;
+    this.labelWorld = nextWorld;
   }
 
   private drawSelection(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, civId: number) {
@@ -629,17 +726,27 @@ export class MapView {
       ctx.fillText('light of their first radio', ox + front * 0.71 + 4, oy - front * 0.71);
       ctx.setLineDash([]);
     }
-    // How far they can see a fully built-out neighbour.
-    const k = tierAt(c.tierTimes, frame.t);
-    if (k >= 0 && frame.held[civId] > 0) {
-      const range = r.params.detectRange * TIERS[k].sensor * this.scale;
+    // How far their telescopes pick out the faintest heat they can tell from dust.
+    if (maturity(c.tierTimes, frame.t) >= 0 && frame.held[civId] > 0) {
+      const s = lineageSensor(r.params, c.tTech, c.tierTimes, frame.t);
+      const gly = (r.params.detectRange * Math.sqrt(s.gain * s.contrast)) / cosmo.a(frame.t);
+      const range = gly * this.scale;
       const [cr, cg, cb] = lineageRgb(civId);
-      ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.5)`;
-      ctx.beginPath();
-      ctx.arc(ox, oy, range, 0, Math.PI * 2);
-      ctx.stroke();
+      const pct = `${s.contrast * 100 >= 1 ? (s.contrast * 100).toFixed(0) : (s.contrast * 100).toFixed(1)}%`;
       ctx.fillStyle = `rgba(${cr},${cg},${cb},0.8)`;
-      ctx.fillText('sensor range', ox + range * 0.71 + 4, oy + range * 0.71);
+      if (gly < L) {
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.5)`;
+        ctx.beginPath();
+        ctx.arc(ox, oy, range, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillText(`sees waste heat ≥ ${pct} of starlight to here`, ox + range * 0.71 + 4, oy + range * 0.71);
+      } else {
+        const text = `sees waste heat ≥ ${pct} of starlight across the whole box`;
+        const tw = ctx.measureText(text).width;
+        const cw = this.canvas.width;
+        const ch = this.canvas.height;
+        ctx.fillText(text, Math.max(4 * dpr, Math.min(ox + 14 * dpr, cw - tw - 8 * dpr)), Math.max(20 * dpr, Math.min(oy + 18 * dpr, ch - 60 * dpr)));
+      }
     }
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';

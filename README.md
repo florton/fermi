@@ -47,14 +47,17 @@ domain root or in a subfolder.
 - **Universe menu:** a preset, plus tick lists of the kinds of civilisation that can arise and
   the conditions of nature.
 - **Map:** one copy of the box, filling the screen. Drag to pan, scroll to zoom, hover for detail.
-  Depth and Thickness pick a slab of the 3D box to show.
+  Depth and Thickness pick a slab of the 3D box to show. Brightness is the share of a group's
+  starlight turned to waste heat, on a log scale. A new holding starts dim and brightens as
+  settlement spreads through the group and its technology climbs.
 - **Selecting:** click a territory, a ✶ (a species becoming technological: white saw an empty
   sky, orange saw someone) or a ○ (a species that stayed home). Lineages and chronicle entries
   are clickable too.
 - **Timeline:** settled share in grey, first light as ticks along the top, strikes in red,
   and a marker for today. Click or drag to scrub.
-- **Panels:** the selected species, the largest lineages, territory by kind, run statistics,
-  mean traits over time, and a chronicle of firsts. Tab hides them.
+- **Panels:** the selected species (what it saw, what later looks found, its technology, power
+  and telescopes), the largest lineages, territory by kind, run statistics, mean traits over
+  time, and a chronicle of firsts. Tab hides them.
 - **Layers and Parameters:** turn map layers on and off or change the tile size; edit any setting.
 - **Keys:** Space play/pause · ←/→ step · +/− zoom · 0 fit · Tab panels · F full screen · Esc deselect
 
@@ -68,10 +71,12 @@ The model keeps only what matters for who sees whom, and when:
 | --- | --- | --- |
 | Cosmology | Flat ΛCDM expansion, light travel time, the cosmic event horizon, the history of star formation | Radiation era, local dynamics |
 | Universe | A periodic comoving box of galaxy groups with clustering and mass | Individual galaxies; each group stands for thousands |
-| Biology | Carter's "hard steps" against the habitable windows of G, K and M stars, plus metallicity | Every planet that never produces a technological species: counted analytically, never instantiated |
-| Civilisations | Filters, expansion by probes at a fraction of light speed, conflict weighted by empire size, collapse | Everything inside a group: crossing a galaxy is noise next to crossing between groups |
-| Technology | A four-rung ladder (interstellar probes → Dyson swarms → relativistic kinetic weapons → galactic engineering) raising speed, sensor range, strength and waste heat | Specific inventions |
-| Detection | Waste heat on the past light cone, dimmed by redshift; exact within half the box, estimated beyond it from the box's own census | Radio leakage, far too faint to cross between galaxies |
+| Stars | F, G, K, early-M and late-M stars in their real proportions. Each habitable window is a share of the star's main-sequence lifetime as it brightens: about 3 Gyr for F, 6 for the Sun, 12 for K. M dwarfs outlast the universe so far, but flares and tidal locking are swept as unknowns | Individual stars and planets |
+| Biology | Carter's "hard steps" against those windows. A metallicity window: too few metals for rocky planets early on, and too many later, when migrating giant planets wreck inner systems. Gamma-ray bursts follow metal-poor star formation, so the young universe was far more dangerous | Every planet that never produces a technological species: counted analytically, never instantiated |
+| Travel | Probes that coast and slow as space expands (momentum ∝ 1/a), with build time rising steeply near light speed | Everything inside a galaxy |
+| Civilisations | Filters and collapse. Settlement spreads galaxy by galaxy through each group, taking about as long as the hop between groups. Wars are won by energy, with support from neighbouring holdings and attacks from afar both weakened by distance | Individual galaxies' politics |
+| Technology | A continuous climb through four milestones: interstellar probes → Dyson swarms → relativistic kinetic weapons → galactic engineering. It smoothly raises probe speed, the share of starlight harnessed (from a thousandth to all of it) and telescope sensitivity. Power is shown as a Kardashev number | Specific inventions |
+| Detection | Mid-infrared waste heat of single galaxies on the past light cone. It is judged against a present-day survey: it must be bright enough at its luminosity distance (WISE-class, about 3 Gly for a fully lit galaxy) and a large enough share of starlight (about 10%) to stand out from dust. Species that see nothing look again 10 Myr, 100 Myr and 1 Gyr later with better telescopes. Exact within half the box, estimated beyond it from the box's own census | Radio leakage, far too faint to cross between galaxies |
 | Time | Event-driven, jumping from one happening to the next | The empty billions of years in between |
 
 Each expanding lineage carries eight traits: **expansionism, speed, aggression, stealth,
@@ -95,10 +100,11 @@ evidence against it. This is Brin's non-exclusivity argument.
 
 | Explanation | Enters as | In the model |
 | --- | --- | --- |
-| Rare life, Rare Earth | Nature | hard-step rates, habitable planets per solar mass, star classes |
-| Radiation hazards | Nature | true sterilization (rare) and complex-life wipes that microbes survive |
-| Great filter ahead | Nature | risk at each new tech tier |
-| Interstellar travel is hard | Nature | maximum probe speed, launch delay |
+| Rare life, Rare Earth | Nature | hard-step rates, habitable planets per solar mass, the metallicity window, M-dwarf flares and tidal locking |
+| Radiation hazards | Nature | true sterilization (rare) and complex-life wipes that microbes survive, both worst in the metal-poor young universe |
+| We can't see them yet | Nature | how much waste heat stands out from dust; silent species look again with better telescopes |
+| Great filter ahead | Nature | risk at each new tech milestone |
+| Interstellar travel is hard | Nature | maximum probe speed, launch delay, probes slowing as space expands |
 | Growth is unsustainable | Nature | collapse that rises with expansion speed |
 | Dark forest | Option + nature | stealth and strikes as options; blast reach and the limits of stealth as nature |
 | Berserkers | Kind | some species release self-replicating killer probes that can outlive them |
@@ -123,12 +129,30 @@ alien psychology rather than dynamics.
 
 These hold within this model and its assumptions. They are not claims about the real universe.
 
-- **Rare life is required.** Under both anthropic assumptions (below), under 10% of the weight
-  falls on hard steps faster than about 10⁻⁵·⁴ per Gyr. In the whole observable universe that
-  means fewer than about 4 million technological origins over 40 billion years.
-- **No behavioural explanation replaces rarity.** A sweep of 210 universes across seven
-  scenarios (dark forest, berserkers, zoo, transcension, sustainability, filter ahead) moved
-  the fit by no more than noise.
+The first three come from the current model: real stars, metal-biased radiation, coasting
+probes, calibrated infrared sight and energy-based wars. They rest on two sweeps: 144 universes
+comparing radiation hazards (4 hard-step rates × 12 seeds each), and 96 across eight scenarios
+(4 seeds each). The rest were found with the earlier, simpler model and haven't been re-run yet.
+
+- **Either life is rare or the young universe was deadly.**
+  - **Without radiation hazards**, life has to be rare. At hard steps of 10⁻⁵ per Gyr or
+    commoner, not one of 24 universes produced an observer like us. The baseline's weight sits
+    at 10⁻⁵·⁸.
+  - **With sterilizing radiation**, it beats no radiation by about 13 to 1 under self-sampling
+    and over 100 to 1 under self-indication. Radiation clears the early universe, so life
+    arises late and isn't overrun by earlier civilisations.
+  - **The metal bias decides how common life can be.** Gamma-ray bursts that follow metal-poor
+    star formation are tens of times worse in the young universe than today. With that bias,
+    even the commonest life tested (10⁻⁴·⁶) gives many observers like us: 701, and 72% of the
+    self-indication posterior. Spread the same radiation over all star formation and that
+    setting gives 1. Unbiased radiation only works if life is rarer, near 10⁻⁵.
+- **No behavioural explanation replaces those two.** Dark forest, berserkers, a peaceful
+  galaxy, unsustainable growth and a filter ahead all score within noise of the baseline
+  (5.6–7.3% vs 6.8% under self-sampling).
+- **An empty sky is mostly crude telescopes.** About 1–3% of species see nobody at first
+  light. Of those that survive to look again a billion years later with better telescopes,
+  about 9 in 10 find someone: their neighbours' heat was there all along, but too faint a
+  share of starlight to tell from dust.
 - **The dark forest doesn't silence the sky.** Partial stealth doesn't protect anyone from
   nearby advanced sensors, so evolution has no gradual slope toward hiding. Strikes are
   attrition that expansion replaces. And the lineages that come to dominate arose before anyone
@@ -150,8 +174,9 @@ These hold within this model and its assumptions. They are not claims about the 
   Around 100 Gyr, dark energy shrinks the reachable distance below the gap between neighbouring
   groups. After that every group is an island and nothing can be resettled. Nothing in the model
   forces this; it comes from the cosmic event horizon.
-- **Our Sun is a ~1% coincidence.** Under the default biology about 94% of present-day
-  technological species orbit K dwarfs, because hard steps favour long habitable windows.
+- **Our Sun is a ~2% coincidence** (current model). About 89% of present-day technological
+  species orbit K dwarfs, because hard steps favour long habitable windows. M dwarfs would win if their
+  flares and tidal locking were survivable, which is why both are swept.
 
 ## Experiments from the command line
 
@@ -183,8 +208,9 @@ likelihoods are reported, because anthropic reasoning hasn't settled which appli
 Present-day silence was checked against things the answer shouldn't depend on. Resolution
 (15k–60k groups) and the far-field estimate change it by no more than noise. Box size does
 matter: below about 4.5 billion light-years, one empire can fill the box and wrap onto itself,
-overstating silence. Scripts default to 6 Gly with 30k groups. The viewer's Large setting uses
-12 Gly with 120k groups, which matches the converged answer.
+overstating silence. Scripts default to 6 Gly with 30k groups (about 10 s a run). The viewer's
+Large setting uses 12 Gly with 120k groups (about 50 s), which matches the converged answer.
+These convergence checks were made with the earlier model.
 
 ## Known limits
 
@@ -193,6 +219,10 @@ overstating silence. Scripts default to 6 Gly with 30k groups. The viewer's Larg
 - The links between a species' origin and its traits are hypotheses with tunable strength, not findings.
 - Strikes and stealth act per galaxy group. Wiping out a lineage's home or whole cluster at
   once isn't modelled, so strikes wear empires down but can't decapitate them.
+- Every group follows the cosmic mean history of star formation and metals. Real clusters
+  formed their stars early and field groups later, which would shift where and when life arises.
+- The milestone values (how much starlight each stage harnesses, how good its telescopes are)
+  are reasoned guesses, not measurements. Only the present-day survey limits are anchored to data.
 
 ## Project layout
 

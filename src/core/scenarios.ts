@@ -21,7 +21,7 @@ export interface Condition {
 export const CONDITIONS: Record<string, Condition> = {
   sterilization: {
     label: 'Sterilizing radiation',
-    blurb: 'Very close gamma-ray bursts or supernovae that kill everything (0.03 per Gyr today, ~10× more in the past).',
+    blurb: 'Very close gamma-ray bursts or supernovae that kill everything (0.03 per Gyr today, tens of times more in the young, metal-poor universe).',
     params: { sterilizeRate: 0.03 },
   },
   complexWipes: {
@@ -31,7 +31,7 @@ export const CONDITIONS: Record<string, Condition> = {
   },
   filterAhead: {
     label: 'Dangerous technology',
-    blurb: 'Each new tech tier destroys some holdings that reach it (the great filter ahead).',
+    blurb: 'Each new tech milestone destroys some holdings that reach it (the great filter ahead).',
     params: { tierHazard: 0.5 },
   },
   growthLimits: {

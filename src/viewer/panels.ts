@@ -4,12 +4,16 @@ import { ARCHETYPES } from '../core/archetypes.ts';
 import { N_TRAITS, TRAITS } from '../core/genome.ts';
 import type { SimResult } from '../core/sim.ts';
 import type { Summary } from '../core/summary.ts';
-import { lightFront, lineageRgb, tierName, type Frame } from './state.ts';
+import { lineageSensor, maturity } from '../core/tech.ts';
+import { kardashevLabel, lightFront, lineageRgb, tierName, type Frame } from './state.ts';
 
 export const TRAIT_COLORS = ['#8ab4ff', '#ffd27a', '#ff6b6b', '#b48cff', '#6ee7a8', '#f5f5f5', '#ff9ad5', '#ffb86b'];
 
 const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(1)}%` : '—');
+/** A small share as a percentage with as many digits as it needs: 10%, 1%, 0.3%. */
+const pctOf = (x: number) => `${Number((100 * x).toPrecision(x >= 0.1 ? 2 : 1))}%`;
 const gyr = (x: number) => (Number.isFinite(x) ? `${x.toFixed(2)} Gyr` : '—');
+const myr = (x: number) => (x < 1 ? `${Math.round(x * 1000)} Myr` : `${x.toFixed(1)} Gyr`);
 const swatch = (lin: number) => `<i class="sw" style="background:rgb(${lineageRgb(lin).join(',')})"></i>`;
 
 /** `s` is null while the run is still being simulated: the whole-run figures come at the end. */
@@ -39,6 +43,7 @@ export function renderStats(el: HTMLElement, r: SimResult, s: Summary | null, t:
     ['Preempted · filtered · stayed home', `${s.fates.preempted} · ${s.fates.filtered} · ${s.fates.quiet + s.fates.engulfed}`],
     ['Expanded', String(s.fates.expanding)],
     ['Present-day observers silent', `${pct(s.presentSilentFrac)} of ${s.presentObservers}`],
+    ['…still silent 1 Gyr on, better telescopes', s.stillSilentOf ? `${pct(s.stillSilentFrac)} of ${s.stillSilentOf}` : '—'],
     ['Median warning before arrival', gyr(s.medianWarning)],
     ['Strikes · kills · retaliations', `${s.tally.strikes} · ${s.tally.strikeKills} · ${s.tally.retaliations}`],
     ['Origins in observable universe', s.originsObservableUniverse.toExponential(1)],
@@ -65,6 +70,15 @@ export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin
         ? 'a faint glow beyond the box'
         : 'an empty sky'
     : 'never looked (preempted)';
+  // Species that saw nobody look again 10 Myr, 100 Myr and 1 Gyr on, with better telescopes.
+  const later = !c.saw || c.firstSeen === c.tTech
+    ? ''
+    : c.firstSeen > c.tTech && c.firstSeen <= t
+      ? `found someone ${myr(c.firstSeen - c.tTech)} later`
+      : c.lastLook > c.tTech && c.lastLook <= t
+        ? `still nobody ${myr(c.lastLook - c.tTech)} later`
+        : '';
+  const sensor = maturity(c.tierTimes, t) >= 0 ? lineageSensor(r.params, c.tTech, c.tierTimes, t) : null;
   // Current mean genome over this lineage's living polities.
   const mean = new Array<number>(N_TRAITS).fill(0);
   let alive = 0;
@@ -97,11 +111,14 @@ export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin
       <span>Started as</span><span>${ARCHETYPES[c.archetype]?.label ?? c.archetype}</span>
       <span>Alliance</span><span>${c.alliance === c.id ? (allianceSize(r, c.id) > 1 ? 'leads one' : 'none') : `with the ${r.civs[c.alliance].name}`}</span>
       <span>Saw at first light</span><span>${saw}</span>
+      ${later ? `<span>With better telescopes</span><span>${later}</span>` : ''}
       <span>Colonies visible to them then</span><span>${c.saw ? `${sightCount}${sightCount ? ' (orange lines)' : ''}` : '—'}</span>
       <span>Faster-than-light channel</span><span>${Number.isFinite(c.ftl) ? `from ${gyr(c.ftl)}` : 'no'}</span>
       <span>Fate</span><span>${c.fate}</span>
       <span>Territory now · peak, groups</span><span>${frame.held[lin]} · ${c.peak}</span>
       <span>Technology now</span><span>${tierName(r, lin, t)}</span>
+      <span>Power harnessed now</span><span>${frame.held[lin] ? `${kardashevLabel(r, frame, lin)} (Kardashev)` : '—'}</span>
+      <span>Telescopes see heat down to</span><span>${sensor ? `${pctOf(sensor.contrast)} of a galaxy's starlight` : `${pctOf(r.params.humanContrast)} (like ours)`}</span>
       <span>Strikes fired · groups lost to strikes</span><span>${fired} · ${suffered}</span>
       <span>Their first light has reached</span><span>${born ? `${lightFront(c.tTech, t).toFixed(2)} Gly` : '—'}</span>
     </div>
@@ -146,7 +163,7 @@ export function renderLineages(el: HTMLElement, r: SimResult, frame: Frame, sele
     .slice(0, 12)
     .map(
       (i) =>
-        `<li data-lin="${i}" class="${i === selected ? 'sel' : ''}">${swatch(i)}<span>${r.civs[i].name}</span><small>${frame.held[i]} · ${tierName(r, i, frame.t)}</small></li>`,
+        `<li data-lin="${i}" class="${i === selected ? 'sel' : ''}">${swatch(i)}<span>${r.civs[i].name}</span><small>${frame.held[i]} · ${tierName(r, i, frame.t)} · ${kardashevLabel(r, frame, i)}</small></li>`,
     )
     .join('');
 }

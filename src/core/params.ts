@@ -6,17 +6,28 @@
  * hard-step rates above all) are unknown to many orders of magnitude, and the
  * point of the project is to ask which settings of them produce a sky that
  * looks like ours. They are chosen to give a run with enough going on to watch:
- * hundreds to a few thousand technological origins in the box.
+ * hundreds to a few thousand technological origins in the box. Where a number
+ * has a measured or physical anchor (star lifetimes, survey limits), the
+ * comment says where it comes from.
  */
 
 export interface StarClass {
   name: string;
-  /** Fraction of habitable-zone rocky planets that orbit this kind of star. */
+  /**
+   * Typical mass, solar masses. Sets the main-sequence lifetime (about
+   * 10 Gyr × M^−2.5), and with it how long a planet can stay habitable as the
+   * star brightens (biology.ts).
+   */
+  mass: number;
+  /** Fraction of habitable-zone rocky planets that orbit this kind of star (close to its share of stars). */
   frac: number;
-  /** How long the planet stays habitable, Gyr. Life has this long to finish every hard step. */
-  window: number;
-  /** Extra multiplier on habitability (flares, tidal locking for M dwarfs). */
-  weight: number;
+  /**
+   * How flare-active the star is, 0..1: young M dwarfs blast their planets with
+   * flares and ultraviolet for billions of years. Sets how hard params.flareSurvival bites.
+   */
+  flare: number;
+  /** Fraction of its habitable-zone planets close enough in to be tidally locked. */
+  tidalLock: number;
 }
 
 export interface HardStep {
@@ -51,7 +62,37 @@ export interface SimParams {
    * heavier than helium to build planets from.
    */
   metalHalf: number;
+  /**
+   * Spread of metallicity between and within galaxies at one moment, dex. Stars
+   * are born across this range around the cosmic mean, so even early on a few
+   * are metal-rich enough for rocky planets, and even late a few are too poor.
+   */
+  metalSpread: number;
+  /**
+   * Chance, at today's mean metallicity, that a migrating giant planet wrecks
+   * the inner system. Giant planets are commoner around metal-rich stars
+   * (occurrence ∝ Z², Fischer & Valenti 2005), so this is the upper edge of
+   * the galactic habitable zone (Lineweaver 2004).
+   */
+  giantRisk: number;
   starClasses: StarClass[];
+  /**
+   * Share of a star's main-sequence life that a planet at a fixed orbit stays
+   * habitable as the star brightens. Earth: habitable from ~0.5 to ~6.5 Gyr of
+   * the Sun's ~10, so ~0.6.
+   */
+  habitableShare: number;
+  /**
+   * Chance a habitable-zone planet of a fully flare-active star keeps its air and
+   * water. Scaled per class by StarClass.flare. Unknown over orders of magnitude.
+   */
+  flareSurvival: number;
+  /**
+   * How habitable a tidally locked planet is, relative to one that spins. 1 means
+   * locking doesn't matter; near 0 means a permanent day side and night side
+   * rule out complex life. Unknown.
+   */
+  tidalLockHabitability: number;
   /** Fixed delay before the first step can start: crust cooling, bombardment, Gyr. */
   minDelay: number;
   /** The ladder from chemistry to radio telescopes. Every step must finish inside the habitable window. */
@@ -72,6 +113,13 @@ export interface SimParams {
    * times, so a complete wipe of complex life is rarer than that.
    */
   resetRate: number;
+  /**
+   * Long gamma-ray bursts come almost only from star formation below this
+   * metallicity (as a fraction of today's mean), so radiation hazards follow
+   * metal-poor star formation rather than all of it, and the young universe was
+   * far more dangerous than its star formation rate alone says. 0 drops the bias.
+   */
+  grbMetalCut: number;
   /** How many of the first hard-step stages are microbial and survive a complex-life wipe. */
   microbialSteps: number;
   /** Safety cap on technological origins sampled in one run. */
@@ -101,16 +149,46 @@ export interface SimParams {
    * frontiers churn every few Myr.
    */
   siegeDelay: number;
-  /** How much harder a node is to take than to hold: the defender's power is multiplied by this. */
+  /** How much harder a node is to take than to hold: the defender's force is multiplied by this. */
   defenderAdvantage: number;
+  /**
+   * Distance over which force can be brought to bear, Gly. A fight is won by
+   * energy: the holding's own, plus kin and allied holdings next door, each
+   * discounted by e^(−distance/supportReach); an attacker's force is discounted
+   * the same way over the distance it travels. So isolated outposts and attacks
+   * far from home are weak.
+   */
+  supportReach: number;
+  /**
+   * How decisive an energy advantage is: an attacker with force A takes a node
+   * defended by force D with chance A^w / (A^w + D^w). 1 is proportional odds;
+   * larger is closer to "the stronger side always wins".
+   */
+  warExponent: number;
+  /**
+   * How fast settlement spreads through a galaxy group once the first galaxy is
+   * reached, as a fraction of probe speed (probes stop, build and relaunch at
+   * every galaxy on the way). A group is about as wide as the gap to the next one,
+   * so filling it takes as long as a hop or longer.
+   */
+  fillSpeed: number;
   /** Chance a native civ is prevented from arising in a node someone else already holds. */
   preemption: number;
   /**
-   * Distance at which a fully converted, unhidden, average-mass node is detectable
-   * by a present-day-human-class sensor, Gly. Scales as √luminosity, and is
-   * stretched by (1+z) for light from the past.
+   * Luminosity distance, Gly, at which a present-day all-sky infrared survey
+   * could pick out one galaxy whose whole starlight is turned into ~300 K waste
+   * heat. WISE's 12 µm limit (~0.9 mJy) puts a Milky-Way-class galaxy (3×10¹⁰ L☉)
+   * at ~6 Gly; telling it apart needs the galaxy's whole spectrum, as G-HAT did,
+   * which works to about half that. Range scales as √(heat fraction × sensor gain).
    */
   detectRange: number;
+  /**
+   * Smallest fraction of a galaxy's starlight, as waste heat, that present-day
+   * astronomy can tell apart from natural dust emission. G-HAT (WISE) and
+   * Garrett (2015, the far-infrared–radio correlation) rule out more than ~10–50%
+   * in nearby galaxies; below that, a civilisation's heat hides in the dust.
+   */
+  humanContrast: number;
   /**
    * 1 to estimate what observers see beyond half the box from the box's own
    * luminosity census (assuming the box is a fair sample), 0 to see only inside it.
@@ -125,13 +203,13 @@ export interface SimParams {
   stealthCost: number;
 
   // ── Technology ───────────────────────────────────────────────────────────
-  /** Mean time between rungs of the tech ladder, Gyr. Caution stretches it. */
+  /** Mean time between milestones of the tech ladder, Gyr. Caution stretches it. */
   techStep: number;
   /**
-   * The great filter ahead, as a fact of nature: the chance that each new rung
-   * of the ladder destroys a holding that reaches it (caution and inwardness
-   * lower it). Applied per holding, not per lineage, because nothing can stop an
-   * empire spread across galaxy groups all at once faster than light.
+   * The great filter ahead, as a fact of nature: the chance that each new
+   * milestone of the ladder destroys a holding that reaches it (caution and
+   * inwardness lower it). Applied per holding, not per lineage, because nothing
+   * can stop an empire spread across galaxy groups all at once faster than light.
    */
   tierHazard: number;
   /**
@@ -139,7 +217,7 @@ export interface SimParams {
    * an available strategy and selection decides; 0 means it doesn't exist in nature.
    */
   inwardnessCap: number;
-  /** Time to build a newly held node out to its tier's full conversion, Gyr. */
+  /** Time to build a newly reached galaxy out to its technology's full conversion of starlight, Gyr. */
   conversionTime: number;
 
   // ── Dark forest ──────────────────────────────────────────────────────────
@@ -155,8 +233,6 @@ export interface SimParams {
   strikeReveal: number;
   /** A struck node can't be resettled for this long, Gyr. */
   sterileTime: number;
-  /** Weight of a lineage's size in conflict: power × (1 + w·log₁₀ nodes held). */
-  lineageStrength: number;
   /**
    * Reach of one strike, Gly: every holding of the target's lineage within this
    * distance of the impact is destroyed too. 0 hits one node. A fact about
@@ -181,7 +257,7 @@ export interface SimParams {
   berserkerSpeed: number;
   /** Chance a swarm dies out at each node it reaches (wear, mutation, defences). */
   berserkerDecay: number;
-  /** Swarms kill holdings at least this bright (waste-heat luminosity). Dim and hidden ones are passed over. */
+  /** Swarms kill holdings showing at least this fraction of their starlight as waste heat. Dim and hidden ones are passed over. */
   berserkerSense: number;
 
   // ── Growth ───────────────────────────────────────────────────────────────
@@ -256,11 +332,20 @@ export const DEFAULTS: SimParams = {
 
   habitablePerMsun: 0.1,
   metalHalf: 0.3,
+  metalSpread: 0.3,
+  giantRisk: 0.1,
+  // Shares of stars by class from the solar neighbourhood (RECONS); M dwarfs split
+  // at ~0.35 M☉, where they become fully convective and far more flare-active.
   starClasses: [
-    { name: 'G', frac: 0.07, window: 5, weight: 1 },
-    { name: 'K', frac: 0.13, window: 15, weight: 1 },
-    { name: 'M', frac: 0.75, window: 50, weight: 0.01 },
+    { name: 'F', mass: 1.3, frac: 0.03, flare: 0, tidalLock: 0 },
+    { name: 'G', mass: 1, frac: 0.07, flare: 0, tidalLock: 0 },
+    { name: 'K', mass: 0.75, frac: 0.13, flare: 0.05, tidalLock: 0.1 },
+    { name: 'early M', mass: 0.45, frac: 0.19, flare: 0.5, tidalLock: 1 },
+    { name: 'late M', mass: 0.2, frac: 0.58, flare: 1, tidalLock: 1 },
   ],
+  habitableShare: 0.6,
+  flareSurvival: 0.02,
+  tidalLockHabitability: 0.25,
   minDelay: 0.5,
   hardSteps: [
     { name: 'abiogenesis', log10Rate: 0 },
@@ -271,6 +356,7 @@ export const DEFAULTS: SimParams = {
   ],
   sterilizeRate: 0,
   resetRate: 0,
+  grbMetalCut: 0.3,
   microbialSteps: 2,
   maxCivs: 100000,
 
@@ -285,8 +371,12 @@ export const DEFAULTS: SimParams = {
   kinThreshold: 0.3,
   siegeDelay: 2,
   defenderAdvantage: 3,
+  supportReach: 0.25,
+  warExponent: 1,
+  fillSpeed: 0.5,
   preemption: 1,
-  detectRange: 1.5,
+  detectRange: 3,
+  humanContrast: 0.1,
   farField: 1,
   stealthFloor: 0.1,
   stealthCost: 1,
@@ -294,7 +384,7 @@ export const DEFAULTS: SimParams = {
   techStep: 0.4,
   tierHazard: 0,
   inwardnessCap: 1,
-  conversionTime: 0.2,
+  conversionTime: 0.05,
 
   scanInterval: 0.5,
   strikesPerScan: 2,
@@ -302,7 +392,6 @@ export const DEFAULTS: SimParams = {
   strikeKill: 0.8,
   strikeReveal: 0.5,
   sterileTime: 0.5,
-  lineageStrength: 1,
   strikeRadius: 0,
   threatResponse: 0.3,
 

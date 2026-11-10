@@ -10,6 +10,11 @@
  *   observer a civ at the moment it becomes technological, looking at its past light cone
  *   strike   a relativistic kinetic weapon fired at a node someone could see
  *
+ * A polity's hold on a group grows: settlement spreads galaxy by galaxy from
+ * where it first arrived, so a young holding has little power, can't yet have
+ * reached every native species in the group, and is easy to overrun. Power
+ * (mass × share settled × starlight harnessed) is what wins wars.
+ *
  * Seeing has consequences. A lineage with strike capability periodically looks
  * at its own sky and, if aggressive, fires at what it finds; a strike can be
  * traced back. That is the dark-forest hypothesis made into a mechanism, so
@@ -19,10 +24,12 @@
  * see inside the box, and — beyond half the box, where the box can't be
  * simulated directly — how many it would expect to see if the rest of the
  * universe looks like this sample. "Silent" means it saw nobody either way.
+ * A silent species that survives looks again with better telescopes, which
+ * separates "nobody there" from "nobody we could yet tell from dust".
  */
 
 import { ARCHETYPES, archetypeGenome } from './archetypes.ts';
-import { buildStepTable, sampleOrigins } from './biology.ts';
+import { buildStepTable, habitableWindow, makeLife, sampleOrigins } from './biology.ts';
 import { makeCosmology, type Cosmology } from './cosmology.ts';
 import {
   AGGRESSION,
@@ -46,7 +53,21 @@ import { EventQueue, type Event } from './heap.ts';
 import { lineageName } from './names.ts';
 import type { SimParams } from './params.ts';
 import { exponential, mulberry32 } from './rng.ts';
-import { STRIKE_TIER, TIERS, luminosity, tierAt } from './tech.ts';
+import {
+  STRIKE_TIER,
+  TIERS,
+  canSee,
+  filled,
+  heatFraction,
+  homeSensor,
+  humanSensor,
+  lineageSensor,
+  maturity,
+  maxSight,
+  speedFactor,
+  tierAt,
+  type Sensor,
+} from './tech.ts';
 import { makeUniverse, type Universe } from './universe.ts';
 
 export const FATES = ['pending', 'preempted', 'filtered', 'quiet', 'expanding', 'destroyed', 'engulfed'] as const;
@@ -74,6 +95,13 @@ export interface Civ {
     /** Someone else already held this civ's own galaxy group when it looked up. */
     hostHere: boolean;
   } | null;
+  /**
+   * When it first saw anyone: tTech if at first light, later if its improving
+   * telescopes found someone on a later look, NaN if never.
+   */
+  firstSeen: number;
+  /** When it last looked at the sky. Species that see an empty sky look again 10 Myr, 100 Myr and 1 Gyr later, if they live. */
+  lastLook: number;
   /** When the lineage found the faster-than-light channel; Infinity if never. */
   ftl: number;
   /** The kind of civilisation it started as (a key of ARCHETYPES). */
@@ -117,6 +145,9 @@ export interface Polities {
   parent: Int32Array;
   born: Float32Array;
   died: Float32Array;
+  /** When settlement of the group effectively began (earlier than `born` if it took over a filled one), and how long filling it takes. */
+  fillStart: Float32Array;
+  fillTime: Float32Array;
   /** N_TRAITS per polity. */
   genome: Float32Array;
 }
@@ -152,6 +183,8 @@ export interface Tally {
   punishments: number;
   /** Times two communal lineages joined forces. */
   alliances: number;
+  /** Later looks at the sky by species that first saw nobody. */
+  relooks: number;
 }
 
 export interface SimResult {
@@ -183,11 +216,19 @@ const TIER = 6;
 const SCAN = 7;
 const STRIKE = 8;
 const BERSERK = 9;
+/** A spreading holding reaches the home of a species living quietly inside its group. */
+const ENCOUNTER = 10;
+/** A species that saw an empty sky looks again with better telescopes. */
+const RELOOK = 11;
 
-// Luminosity census bins for the far field: detection range at sensor 1, log-spaced.
-const CENSUS_BINS = 64;
-const CENSUS_MIN = 0.01;
+/** Gyr after first light at which a species that saw nobody looks again. */
+const RELOOK_AFTER = [0.01, 0.1, 1];
+
+// Census of waste-heat fractions for the far field, log-spaced from 10⁻⁴ to 1.
 const CENSUS_PER_DECADE = 16;
+const CENSUS_LOG_MIN = -4;
+const CENSUS_BINS = -CENSUS_LOG_MIN * CENSUS_PER_DECADE + 1;
+const censusBin = (f: number) => Math.max(0, Math.min(CENSUS_BINS - 1, Math.floor(CENSUS_PER_DECADE * (Math.log10(f) - CENSUS_LOG_MIN))));
 
 /** A run in progress, advanced a slice at a time. */
 export interface SimRun {
@@ -212,11 +253,14 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
   const rng = mulberry32(p.seed);
   const cosmo: Cosmology = makeCosmology();
   const uni: Universe = makeUniverse(p);
-  const maxWindow = Math.max(...p.starClasses.map((c) => c.window));
+  const life = makeLife(p, cosmo);
+  const maxWindow = Math.max(...p.starClasses.map((c) => habitableWindow(p, c)));
   const table = buildStepTable(p, Math.min(maxWindow, p.tEnd) + 1);
-  const sample = sampleOrigins(p, cosmo, uni, table, rng);
+  const sample = sampleOrigins(p, life, uni, table, rng);
   const halfBox = uni.L / 2;
   const boxVolume = uni.L ** 3;
+  /** Radius of a sphere as big as one group's share of the box, comoving Gly: how far settlement spreads to fill it. */
+  const groupRadius = Math.cbrt((3 * boxVolume) / (4 * Math.PI * uni.n));
 
   // Optional strategies can't exceed what nature allows; everything else spans [0, 1].
   const capped = (g: Genome) => {
@@ -244,6 +288,8 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     tEngulfed: NaN,
     peak: 0,
     tierTimes: [],
+    firstSeen: NaN,
+    lastLook: NaN,
     ftl: Infinity,
     alliance: id,
   }));
@@ -260,6 +306,8 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
   const pParent: number[] = [];
   const pBorn: number[] = [];
   const pDied: number[] = [];
+  const pFillStart: number[] = [];
+  const pFillTime: number[] = [];
   const pGenome: Genome[] = [];
   const pVis: number[] = [];
   // Each node's polities as a linked list, newest first, and the nodes that have ever had one.
@@ -311,7 +359,23 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     chronicle.push({ t, kind, text, who });
   };
   const contacts = new Set<number>();
-  const tally: Tally = { launches: 0, settlements: 0, conquests: 0, repelled: 0, collapses: 0, strikes: 0, strikeKills: 0, retaliations: 0, tierLosses: 0, swarms: 0, berserkerKills: 0, ftlLineages: 0, punishments: 0, alliances: 0 };
+  const tally: Tally = {
+    launches: 0,
+    settlements: 0,
+    conquests: 0,
+    repelled: 0,
+    collapses: 0,
+    strikes: 0,
+    strikeKills: 0,
+    retaliations: 0,
+    tierLosses: 0,
+    swarms: 0,
+    berserkerKills: 0,
+    ftlLineages: 0,
+    punishments: 0,
+    alliances: 0,
+    relooks: 0,
+  };
 
   const q = new EventQueue();
   for (const c of civs) q.push(c.tTech, EMERGE, c.id);
@@ -331,54 +395,59 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
   const afflict = (lineage: number) => {
     fear[lineage] = Math.min(1, fear[lineage] + p.threatResponse);
   };
+  /** Continuous technological maturity of a lineage at t; see tech.ts. */
+  const matOf = (lineage: number, t: number) => maturity(civs[lineage].tierTimes, t);
+  /** Launch speed of polity k's probes at t, fraction of c. */
   const speedOf = (k: number, t: number) =>
-    (p.speedMin + (p.speedMax - p.speedMin) * pGenome[k][SPEED]) * TIERS[Math.max(0, tierOf(pLineage[k], t))].speed;
+    (p.speedMin + (p.speedMax - p.speedMin) * pGenome[k][SPEED]) * speedFactor(Math.max(0, matOf(pLineage[k], t)));
+  const gammaMinus1 = (v: number) => 1 / Math.sqrt(1 - v * v) - 1;
+  const gammaMax = gammaMinus1(p.speedMax);
   // Alliances of communal lineages, as a union-find over lineage ids.
   const allyParent = Int32Array.from(civs, (_, i) => i);
   const allyOf = (l: number): number => {
     while (allyParent[l] !== l) l = allyParent[l] = allyParent[allyParent[l]];
     return l;
   };
-  const allyLineages = new Map<number, number[]>();
   const allied = (la: number, lb: number) => la !== lb && allyOf(la) === allyOf(lb);
   const unite = (la: number, lb: number) => {
     const ra = allyOf(la);
     const rb = allyOf(lb);
-    if (ra === rb) return;
-    allyParent[rb] = ra;
-    allyLineages.set(ra, [...(allyLineages.get(ra) ?? [ra]), ...(allyLineages.get(rb) ?? [rb])]);
-    allyLineages.delete(rb);
-  };
-  /** Holdings counted on a lineage's side in a fight: its own, or its whole alliance's. */
-  const sideSize = (l: number) => {
-    const group = allyLineages.get(allyOf(l));
-    return group ? group.reduce((n, x) => n + members[x].length, 0) : members[l].length;
+    if (ra !== rb) allyParent[rb] = ra;
   };
 
   const isKin = (a: number, b: number) =>
     (pLineage[a] === pLineage[b] && genomeDistance(pGenome[a], pGenome[b]) < p.kinThreshold) || allied(pLineage[a], pLineage[b]);
-  const strength = (k: number, t: number) =>
-    power(pGenome[k], p.stealthCost) *
-    TIERS[Math.max(0, tierOf(pLineage[k], t))].power *
-    (1 + p.lineageStrength * Math.log10(Math.max(1, sideSize(pLineage[k]))));
 
-  /** Waste heat of polity k's node as emitted at time te. */
-  const lumAt = (k: number, te: number) => {
+  /** Share of polity k's group settled at t. */
+  const fillOf = (k: number, t: number) => filled(t - pFillStart[k], pFillTime[k]);
+  /** Power polity k harnesses at t, in fully harnessed average groups: mass × share settled × conversion. */
+  const energyOf = (k: number, t: number) =>
+    uni.mass[pNode[k]] * fillOf(k, t) * heatFraction(matOf(pLineage[k], t), t - pBorn[k], p.conversionTime, 1);
+  /**
+   * Force polity k can bring to bear at its own group at t: its own power plus
+   * that of kin and allied holdings next door, each discounted by distance, all
+   * weakened by hiding and turning inward.
+   */
+  const forceOf = (k: number, t: number) => {
+    let e = energyOf(k, t);
+    const node = pNode[k];
+    for (const j of uni.neighbors(node)) {
+      const o = owner[j];
+      if (o < 0 || o === k || !isKin(k, o)) continue;
+      e += energyOf(o, t) * Math.exp(-uni.dist(node, j) / p.supportReach);
+    }
+    return e * power(pGenome[k], p.stealthCost);
+  };
+
+  /** Share of a settled galaxy's starlight that polity k shows as waste heat at time te. */
+  const heatAt = (k: number, te: number) => {
     // With a cloaking channel, a holder can push its waste heat out of normal space:
     // stealth then has no floor, and full stealth is true invisibility.
     const cloaked = p.ftlCloak > 0 && civs[pLineage[k]].ftl <= te;
     const vis = cloaked ? visibility(pGenome[k], 0) : pVis[k];
-    return luminosity(tierOf(pLineage[k], te), te - pBorn[k], p.conversionTime, vis, uni.mass[pNode[k]]);
+    return heatFraction(matOf(pLineage[k], te), te - pBorn[k], p.conversionTime, vis);
   };
-  /** Can light from distance d, emitted when the scale factor was aEmit, be seen now (aObs) with this sensor? */
-  const detectable = (d: number, aEmit: number, aObs: number, lum: number, sensor: number) =>
-    lum > 0 && d * (aObs / aEmit) <= p.detectRange * sensor * Math.sqrt(lum);
-  /**
-   * Nothing at this node could be seen from d with this sensor, whoever held it:
-   * luminosity never exceeds the node's mass, and redshift only makes it worse.
-   * A cheap test that spares the light-travel arithmetic for most of the box.
-   */
-  const outOfReach = (node: number, d: number, sensor: number) => d > p.detectRange * sensor * Math.sqrt(uni.mass[node]);
+  const sensorOf = (l: number, t: number): Sensor => lineageSensor(p, civs[l].tTech, civs[l].tierTimes, t);
   /** Who held `node` at time te, or -1. */
   const holderAt = (node: number, te: number) => {
     for (let k = nodeHead[node]; k >= 0; k = pPrevAtNode[k]) {
@@ -396,18 +465,27 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     const held = owner[target] >= 0 && !isKin(from, owner[target]);
     // Only the aggressive bother sending anything at a held node; a peaceful probe would just turn back.
     if (held && rng() >= g[AGGRESSION]) return;
+    // Faster probes take longer to build: shielding against dust and fuel for
+    // braking both grow with γ − 1, cheap at a few percent of light speed and
+    // steep near it. Probes at speedMax cost three times as long as slow ones.
+    const v = speedOf(from, t);
     const meanDelay =
-      (p.launchDelay * (1 + g[CAUTION]) * (1 + p.stealthCost * g[STEALTH]) * (1 + 2 * g[SPEED] * g[SPEED]) * (1 + 3 * g[INWARDNESS])) /
+      (p.launchDelay *
+        (1 + g[CAUTION]) *
+        (1 + p.stealthCost * g[STEALTH]) *
+        (1 + (2 * gammaMinus1(v)) / gammaMax) *
+        (1 + 3 * g[INWARDNESS])) /
       (0.2 + g[EXPANSIONISM]);
     const tl = Math.max(t, notBefore) + exponential(rng, 1 / meanDelay) + (held ? exponential(rng, 1 / p.siegeDelay) : 0);
-    const ta = cosmo.arrival(tl, uni.dist(pNode[from], target), speedOf(from, tl));
+    const ta = cosmo.coast(tl, uni.dist(pNode[from], target), speedOf(from, tl));
     if (ta < p.tEnd) {
       q.push(ta, ARRIVE, from, target);
       tally.launches++;
     }
   };
 
-  const acquire = (node: number, lineage: number, genome: Genome, parent: number, t: number) => {
+  /** `alreadyFilled` is the share of the group a predecessor had settled, which a conqueror takes over. */
+  const acquire = (node: number, lineage: number, genome: Genome, parent: number, t: number, alreadyFilled = 0) => {
     if (genome[STEALTH] < fear[lineage]) genome[STEALTH] = fear[lineage];
     const id = pNode.length;
     pNode.push(node);
@@ -415,6 +493,12 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     pParent.push(parent);
     pBorn.push(t);
     pDied.push(Infinity);
+    // Settlement spreads from the first galaxy reached across the group at a
+    // fraction of probe speed; the group was physically smaller in the past.
+    const v = Math.max(1e-3, (p.speedMin + (p.speedMax - p.speedMin) * genome[SPEED]) * speedFactor(Math.max(0, matOf(lineage, t))));
+    const fillTime = (cosmo.a(t) * groupRadius) / (p.fillSpeed * v);
+    pFillTime.push(fillTime);
+    pFillStart.push(t - fillTime * Math.cbrt(Math.min(1, alreadyFilled)));
     pGenome.push(genome);
     pVis.push(visibility(genome, p.stealthFloor));
     if (nodeHead[node] === -1) everSettled.push(node);
@@ -448,24 +532,38 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
       launch(id, j, t, sterileUntil[j]);
     }
 
-    // Anyone already living here quietly now lives inside someone's territory.
+    // Anyone living here quietly will find themselves inside someone's
+    // territory when the spreading settlement reaches their galaxy.
     const res = residents.get(node);
     if (res) {
-      for (let k = res.length - 1; k >= 0; k--) {
-        const c = civs[res[k]];
-        if (c.id === lineage) continue;
-        if (!restrained(g) && rng() < g[AGGRESSION] * (1 - 0.8 * c.genome[STEALTH])) {
-          c.fate = 'destroyed';
-          c.tFate = t;
-          res.splice(k, 1);
-          quietAlive--;
-          log(t, 'war', `The ${civ.name} reach the ${c.name}' home and wipe them out.`, 40, lineage);
-        } else {
-          log(t, 'zoo', `The ${civ.name} find the ${c.name} and leave them be.`, 30, lineage);
-        }
+      for (const cid of res) {
+        if (cid === lineage) continue;
+        const reached = pFillStart[id] + fillTime * Math.cbrt(rng());
+        q.push(Math.max(t, reached), ENCOUNTER, id, cid);
       }
     }
     return id;
+  };
+
+  /** Polity k's settlement reaches the home of species c, who stayed in their own group. */
+  const encounter = (k: number, cid: number, t: number) => {
+    if (pDied[k] !== Infinity) return;
+    const node = pNode[k];
+    const res = residents.get(node);
+    const at = res ? res.indexOf(cid) : -1;
+    if (at < 0) return;
+    const c = civs[cid];
+    const g = pGenome[k];
+    const name = civs[pLineage[k]].name;
+    if (!restrained(g) && rng() < g[AGGRESSION] * (1 - 0.8 * c.genome[STEALTH])) {
+      c.fate = 'destroyed';
+      c.tFate = t;
+      res!.splice(at, 1);
+      quietAlive--;
+      log(t, 'war', `The ${name} reach the ${c.name}' home and wipe them out.`, 40, pLineage[k]);
+    } else {
+      log(t, 'zoo', `The ${name} find the ${c.name} and leave them be.`, 30, pLineage[k]);
+    }
   };
 
   const kill = (id: number, t: number) => {
@@ -501,7 +599,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
 
   const fireStrike = (from: number, targetPolity: number, t: number, retaliation: boolean): boolean => {
     const to = pNode[targetPolity];
-    const ta = cosmo.arrival(t, uni.dist(pNode[from], to), p.strikeSpeed);
+    const ta = cosmo.coast(t, uni.dist(pNode[from], to), p.strikeSpeed);
     if (!(ta < p.tEnd)) return false;
     const idx = sFrom.length;
     sFrom.push(pNode[from]);
@@ -549,75 +647,99 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
   };
 
   // ── Observation ──────────────────────────────────────────────────────────
-  /** Expected visible nodes beyond half the box, at sensor 1, assuming the box is a fair sample. */
-  const farExpectation = (t: number) => {
+  /** Expected visible groups beyond half the box for this sensor, assuming the box is a fair sample. */
+  const farExpectation = (t: number, s: Sensor) => {
     if (!p.farField || census.length === 0) return 0;
     const dd = 0.05;
+    const aObs = cosmo.a(t);
     let expected = 0;
     for (let d = halfBox + dd / 2; ; d += dd) {
-      const te = cosmo.emission(t, d);
+      const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
       if (te < 0) break;
       const si = Math.min(census.length - 1, Math.floor(te / p.sampleEvery));
       const c = census[si];
-      // Need range ≥ d·(1+z).
-      const need = d * (cosmo.a(t) / cosmo.a(te));
-      const bin = Math.ceil(CENSUS_PER_DECADE * Math.log10(need / CENSUS_MIN));
-      if (bin > brightestBin) break; // nothing in any census is that bright, and further is only dimmer
-      const count = bin < 0 ? c[0] : c[bin];
-      expected += (count / boxVolume) * 4 * Math.PI * d * d * dd;
+      // The heat fraction needed to show from here: above the contrast floor and bright enough at d_L.
+      const dL = aObs * d * (aObs / aEmit);
+      const need = Math.max(s.contrast, (dL / p.detectRange) ** 2 / s.gain);
+      if (need > 1) break; // nothing is brighter than all its starlight, and further is only dimmer
+      const bin = Math.ceil(CENSUS_PER_DECADE * (Math.log10(need) - CENSUS_LOG_MIN));
+      if (bin > brightestBin) break;
+      expected += (c[Math.max(0, bin)] / boxVolume) * 4 * Math.PI * d * d * dd;
     }
     return expected;
   };
 
   // How far away holdings in one's own galaxy group are, for seeing them.
   const intraNode = (p.intraNodeSeeing * uni.L) / Math.cbrt(uni.n);
-  // Two-tier sight. Within the distance at which a 99th-percentile-mass node,
-  // fully lit, could be seen, search the grid ring by ring. Beyond it only the
-  // heaviest 1% of nodes could possibly show, so check just those. Exact, and in
-  // a big box far cheaper than visiting every node.
-  const massSorted = Float32Array.from(uni.mass).sort();
-  const heavyMass = massSorted[Math.floor(0.99 * (uni.n - 1))];
-  const heavy: number[] = [];
-  for (let i = 0; i < uni.n; i++) if (uni.mass[i] > heavyMass) heavy.push(i);
-  const sightReach = (sensor: number) => p.detectRange * sensor * Math.sqrt(heavyMass);
-  /** Visit nodes that might be visible from `from` with this sensor, nearest rings first, heavy outliers last. */
-  const lookAround = (from: number, sensor: number, unbounded: boolean, visit: (j: number, d: number) => void, ringDone: (beyond: number) => boolean) => {
-    const near = unbounded ? halfBox : Math.min(halfBox, sightReach(sensor));
-    let stopped = false;
-    uni.byRings(from, near, visit, (beyond) => (stopped = ringDone(beyond)));
-    if (stopped || near >= halfBox) return;
-    for (const j of heavy) {
-      const d = uni.dist(from, j);
-      if (d > near && d <= halfBox) visit(j, d);
+  const shellShare = (r: number) => Math.min(1, ((4 / 3) * Math.PI * r ** 3) / boxVolume);
+  /**
+   * Visit groups within `reach` of `from` that someone has ever settled. Sweeps
+   * the grid nearest rings first (so `ringDone` can stop early), unless so few
+   * groups have been settled that checking each of them directly is cheaper.
+   */
+  const lookAround = (from: number, reach: number, visit: (j: number, d: number) => void, ringDone: (beyond: number) => boolean) => {
+    const near = Math.min(halfBox, reach);
+    if (everSettled.length * 4 < uni.n * shellShare(near)) {
+      for (const j of everSettled) {
+        if (j === from) continue;
+        const d = uni.dist(from, j);
+        if (d <= near) visit(j, d);
+      }
+      return;
     }
+    uni.byRings(from, near, (j, d) => nodeHead[j] >= 0 && visit(j, d), ringDone);
   };
 
-  const observe = (c: Civ, t: number) => {
+  /** What species c sees at t with these telescopes: the lineages it can pick out, the nearest, and the far-field expectation. */
+  const lookUp = (c: Civ, t: number, s: Sensor) => {
     const seen = new Set<number>();
     let nearest = Infinity;
     const aObs = cosmo.a(t);
     const look = (node: number, d: number) => {
-      if (nodeHead[node] < 0 || outOfReach(node, d, 1)) return;
       const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
       if (te < 0) return;
       // The light arriving now left at te: find who held the node then.
       const k = holderAt(node, te);
-      if (k < 0 || !detectable(d, aEmit, aObs, lumAt(k, te), 1)) return;
+      if (k < 0 || pLineage[k] === c.id || !canSee(heatAt(k, te), d, aEmit, aObs, p.detectRange, s)) return;
       seen.add(pLineage[k]);
       if (d < nearest) nearest = d;
     };
-    look(c.node, intraNode);
-    lookAround(c.node, 1, false, look, () => false);
-    const farExpected = farExpectation(t);
+    if (nodeHead[c.node] >= 0) look(c.node, intraNode);
+    lookAround(c.node, maxSight(p.detectRange, s, aObs), look, () => false);
+    const farExpected = farExpectation(t, s);
     const far = rng() < 1 - Math.exp(-farExpected);
+    return { seen, nearest, farExpected, far };
+  };
+
+  /** First light: a species with present-day human telescopes looks at its past light cone. */
+  const observe = (c: Civ, t: number) => {
+    const { seen, nearest, farExpected, far } = lookUp(c, t, humanSensor(p));
     c.saw = { lineages: seen.size, nearest, farExpected, far, hostHere: owner[c.node] >= 0 };
+    c.lastLook = t;
     observers++;
     if (seen.size === 0 && !far) silent++;
+    else c.firstSeen = t;
     // A species that looks up and sees it isn't alone may learn to keep quiet.
     if (seen.size > 0 || far) {
       c.genome[STEALTH] = Math.min(1, c.genome[STEALTH] + p.skyResponse);
       c.genome[CAUTION] = Math.min(1, c.genome[CAUTION] + p.skyResponse / 2);
     }
+  };
+
+  /** A species that has seen nobody so far looks again, with the telescopes it has now. */
+  const relook = (c: Civ, t: number, which: number) => {
+    const alive =
+      c.fate === 'pending' || c.fate === 'quiet' || c.fate === 'engulfed' || (c.fate === 'expanding' && members[c.id].length > 0);
+    if (!alive) return;
+    tally.relooks++;
+    const s = c.fate === 'expanding' ? sensorOf(c.id, t) : homeSensor(p, t - c.tTech);
+    const { seen, far } = lookUp(c, t, s);
+    c.lastLook = t;
+    if (seen.size > 0 || far) {
+      c.firstSeen = t;
+      return;
+    }
+    if (which + 1 < RELOOK_AFTER.length) q.push(c.tTech + RELOOK_AFTER[which + 1], RELOOK, c.id, which + 1);
   };
 
   // ── Event loop ───────────────────────────────────────────────────────────
@@ -659,9 +781,10 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
     switch (ev.kind) {
       case EMERGE: {
         const c = civs[ev.a];
-        // A restrained holder lets the natives arise: the zoo.
+        // A restrained holder lets the natives arise: the zoo. Anyone else has
+        // only reached the galaxies its settlement has spread to so far.
         const holder = owner[c.node];
-        if (holder >= 0 && !restrained(pGenome[holder]) && rng() < p.preemption) {
+        if (holder >= 0 && !restrained(pGenome[holder]) && rng() < p.preemption * fillOf(holder, t)) {
           c.fate = 'preempted';
           c.tFate = t;
           break;
@@ -681,6 +804,8 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
           log(c.tFate, 'filter', `The ${c.name} do not survive their own technology.`, 10, c.id);
           break;
         }
+        // An empty sky might only mean crude telescopes: they will look again.
+        if (Number.isNaN(c.firstSeen)) q.push(t + RELOOK_AFTER[0], RELOOK, c.id, 0);
         q.push(t + p.techToSpacefaring * (1 + c.genome[CAUTION]), SPACEFARING, c.id);
         break;
       }
@@ -749,7 +874,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
         const v = m[Math.floor(rng() * m.length)];
         const g = pGenome[v];
         if (rng() >= g[AGGRESSION]) break;
-        const sensor = TIERS[Math.max(0, tierOf(lineage, t))].sensor;
+        const sensor = sensorOf(lineage, t);
         const from = pNode[v];
         // Once, an aggressive lineage may let loose killers that will outlive it.
         const releaseChance = ARCHETYPES[civs[lineage].archetype].berserker ? p.berserkerBuildChance : p.berserkerChance;
@@ -769,8 +894,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
         // A channel holder can sense other holders at any distance, so its search isn't bounded by light.
         lookAround(
           from,
-          sensor,
-          selfFtl,
+          selfFtl ? halfBox : maxSight(p.detectRange, sensor, aObs),
           (node, d) => {
             const o = owner[node];
             if (o < 0 || pLineage[o] === lineage || allied(lineage, pLineage[o])) return;
@@ -778,11 +902,10 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
             // Channel holders sense each other now, however dim or far; everyone else needs light.
             const sensed = selfFtl && hasFtl(pLineage[o], t);
             if (!sensed) {
-              if (outOfReach(node, d, sensor)) return;
               const { t: te, a: aEmit } = cosmo.emissionWithScale(t, d);
               // It has to have been visible then, and the same polity has to still be there now.
               const k = te < 0 ? -1 : holderAt(node, te);
-              if (k !== o || !detectable(d, aEmit, aObs, lumAt(k, te), sensor)) return;
+              if (k !== o || !canSee(heatAt(k, te), d, aEmit, aObs, p.detectRange, sensor)) return;
             }
             targets.push({ k: o, d });
           },
@@ -846,7 +969,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
         const maker = swarmMaker[swarm];
         const o = owner[node];
         // They kill whatever is bright enough to notice, except their makers.
-        if (o >= 0 && pLineage[o] !== maker && lumAt(o, t) >= p.berserkerSense) {
+        if (o >= 0 && pLineage[o] !== maker && heatAt(o, t) >= p.berserkerSense) {
           const victim = pLineage[o];
           sFrom.push(node);
           sTo.push(node);
@@ -866,7 +989,7 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
         if (rng() < p.berserkerDecay) break;
         for (const j of uni.neighbors(node)) {
           if (swarmSeen.has(swarm * uni.n + j)) continue;
-          const ta = cosmo.arrival(t, uni.dist(node, j), p.berserkerSpeed);
+          const ta = cosmo.coast(t, uni.dist(node, j), p.berserkerSpeed);
           if (ta < p.tEnd) q.push(ta, BERSERK, swarm, j);
         }
         break;
@@ -899,12 +1022,20 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
         if (restrained(gs) && restrained(go)) break;
         if (rng() >= gs[AGGRESSION] * (1 - 0.8 * go[STEALTH])) break;
         if (protectedByClub(o, s, t)) punish(s, t);
-        const ps = strength(s, t);
-        const po = p.defenderAdvantage * strength(o, t);
-        if (rng() < ps / (ps + po)) {
+        // Energy decides it. The attackers bring their home group's force,
+        // weakened by the distance they came; the defenders fight at home.
+        const tSource = Math.min(t, pDied[s]);
+        const attack = forceOf(s, tSource) * Math.exp(-uni.dist(pNode[s], node) / p.supportReach);
+        const defend = p.defenderAdvantage * forceOf(o, t);
+        const wa = Math.pow(attack, p.warExponent);
+        const wd = Math.pow(defend, p.warExponent);
+        const win = wa + wd > 0 ? wa / (wa + wd) : 0.5;
+        if (rng() < win) {
           if (la !== lb) log(t, 'war', `The ${civs[la].name} take a group from the ${civs[lb].name}.`, 40, la);
+          // The conquerors inherit what the defenders had built and settled.
+          const wasFilled = fillOf(o, t);
           kill(o, t);
-          acquire(node, la, capped(mutate(gs, p.mutationSigma, rng)), s, t);
+          acquire(node, la, capped(mutate(gs, p.mutationSigma, rng)), s, t, wasFilled);
           tally.conquests++;
         } else {
           tally.repelled++;
@@ -920,6 +1051,14 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
         }
         break;
       }
+      case ENCOUNTER: {
+        encounter(ev.a, ev.b, t);
+        break;
+      }
+      case RELOOK: {
+        relook(civs[ev.a], t, ev.b);
+        break;
+      }
       case SAMPLE: {
         const mean = new Array<number>(N_TRAITS).fill(0);
         const bins = new Float32Array(CENSUS_BINS);
@@ -932,10 +1071,9 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
           alive++;
           const g = pGenome[k];
           for (let i = 0; i < N_TRAITS; i++) mean[i] += g[i];
-          const lum = lumAt(k, t);
-          if (lum <= 0) continue;
-          const range = p.detectRange * Math.sqrt(lum);
-          const b = Math.max(0, Math.min(CENSUS_BINS - 1, Math.floor(CENSUS_PER_DECADE * Math.log10(range / CENSUS_MIN))));
+          const heat = heatAt(k, t);
+          if (heat <= 0) continue;
+          const b = censusBin(heat);
           bins[b]++;
           if (b > brightestBin) brightestBin = b;
         }
@@ -982,6 +1120,8 @@ export function startSim(p: SimParams, onProgress?: (fraction: number) => void):
       parent: Int32Array.from(pParent),
       born: Float32Array.from(pBorn),
       died: Float32Array.from(pDied),
+      fillStart: Float32Array.from(pFillStart),
+      fillTime: Float32Array.from(pFillTime),
       genome,
     },
     strikes: {

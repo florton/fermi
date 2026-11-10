@@ -3,7 +3,7 @@
  * and what a sweep writes one row of.
  */
 
-import { buildStepTable, emergenceByClass } from './biology.ts';
+import { buildStepTable, emergenceByClass, makeLife } from './biology.ts';
 import { makeCosmology } from './cosmology.ts';
 import { TRAITS } from './genome.ts';
 import { FATES, type SimResult } from './sim.ts';
@@ -51,6 +51,15 @@ export interface Summary {
   silentHosted: number;
   alreadyHereGivenSilent: number;
   presentSilentHosted: number;
+  /**
+   * Is an empty sky just crude telescopes? Of observers silent at first light
+   * that lived to look again a billion years later, with the telescopes they had
+   * by then, the fraction that still saw nobody. And of those that did find
+   * someone, the median wait, Gyr.
+   */
+  stillSilentFrac: number;
+  stillSilentOf: number;
+  medianWaitToSee: number;
   /** Of observers later reached by a foreign lineage, median years of warning between looking up and arrival, Gyr. */
   medianWarning: number;
   /** Fraction of observers that are eventually reached. */
@@ -84,11 +93,16 @@ export function summarize(r: SimResult): Summary {
   const presentSilent = present.filter(isSilent).length;
   const silentHosted = obs.filter((c) => isSilent(c) && c.saw!.hostHere).length;
   const presentSilentHosted = present.filter((c) => isSilent(c) && c.saw!.hostHere).length;
-  const byClass = emergenceByClass(r.params, cosmo, buildStepTable(r.params, Math.min(r.params.tEnd, 60) + 1), age - 1, age + 1);
+  const life = makeLife(r.params, cosmo, Math.max(r.params.tEnd, age + 1) + 1);
+  const byClass = emergenceByClass(r.params, life, buildStepTable(r.params, Math.min(r.params.tEnd, 60) + 1), age - 1, age + 1);
   const total = byClass.reduce((a, b) => a + b, 0);
   const g = r.params.starClasses.findIndex((c) => c.name === 'G');
   const gShareNow = total > 0 && g >= 0 ? byClass[g] / total : NaN;
   const warnings = obs.filter((c) => c.tEngulfed > c.tTech).map((c) => c.tEngulfed - c.tTech).sort((a, b) => a - b);
+  // Silent at first light, and the question settled: found someone later, or looked a billion years on and still saw nobody.
+  const settledSilence = obs.filter((c) => isSilent(c) && (c.firstSeen > c.tTech || c.lastLook >= c.tTech + 0.999));
+  const stillSilent = settledSilence.filter((c) => Number.isNaN(c.firstSeen)).length;
+  const waits = obs.filter((c) => c.firstSeen > c.tTech).map((c) => c.firstSeen - c.tTech).sort((a, b) => a - b);
 
   const at = (t: number) => {
     let best = r.series[0];
@@ -118,6 +132,9 @@ export function summarize(r: SimResult): Summary {
     silentHosted,
     alreadyHereGivenSilent: round(silent ? silentHosted / silent : NaN),
     presentSilentHosted,
+    stillSilentFrac: round(settledSilence.length ? stillSilent / settledSilence.length : NaN),
+    stillSilentOf: settledSilence.length,
+    medianWaitToSee: round(waits.length ? waits[waits.length >> 1] : NaN),
     medianWarning: round(warnings.length ? warnings[warnings.length >> 1] : NaN),
     engulfedFrac: round(obs.length ? warnings.length / obs.length : NaN),
     settledAtPresent: round(r.series.length ? at(age).settled : NaN),

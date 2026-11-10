@@ -28,6 +28,8 @@ export interface CivDynamic {
   fate: Uint8Array;
   tFate: Float32Array;
   tEngulfed: Float32Array;
+  firstSeen: Float32Array;
+  lastLook: Float32Array;
   peak: Int32Array;
   ftl: Float32Array;
   alliance: Int32Array;
@@ -60,6 +62,8 @@ export function packDynamic(civs: Civ[]): CivDynamic {
     fate: new Uint8Array(n),
     tFate: new Float32Array(n),
     tEngulfed: new Float32Array(n),
+    firstSeen: new Float32Array(n),
+    lastLook: new Float32Array(n),
     peak: new Int32Array(n),
     ftl: new Float32Array(n),
     alliance: new Int32Array(n),
@@ -74,6 +78,8 @@ export function packDynamic(civs: Civ[]): CivDynamic {
     d.fate[i] = FATES.indexOf(c.fate);
     d.tFate[i] = c.tFate;
     d.tEngulfed[i] = c.tEngulfed;
+    d.firstSeen[i] = c.firstSeen;
+    d.lastLook[i] = c.lastLook;
     d.peak[i] = c.peak;
     d.ftl[i] = c.ftl;
     d.alliance[i] = c.alliance;
@@ -108,6 +114,8 @@ export function unpackStatic(s: CivStatic): Civ[] {
     ftl: Infinity,
     alliance: id,
     tEngulfed: NaN,
+    firstSeen: NaN,
+    lastLook: NaN,
     peak: 0,
     tierTimes: [],
   }));
@@ -119,6 +127,8 @@ export function applyDynamic(civs: Civ[], d: CivDynamic) {
     c.fate = FATES[d.fate[i]];
     c.tFate = d.tFate[i];
     c.tEngulfed = d.tEngulfed[i];
+    c.firstSeen = d.firstSeen[i];
+    c.lastLook = d.lastLook[i];
     c.peak = d.peak[i];
     c.ftl = d.ftl[i];
     c.alliance = d.alliance[i];

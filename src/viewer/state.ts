@@ -7,7 +7,7 @@
 import { makeCosmology, type Cosmology } from '../core/cosmology.ts';
 import { N_TRAITS, visibility } from '../core/genome.ts';
 import type { SimResult } from '../core/sim.ts';
-import { TIERS, luminosity, tierAt } from '../core/tech.ts';
+import { TIERS, canSee, filled, heatFraction, humanSensor, kardashev, maturity, tierAt } from '../core/tech.ts';
 
 export const cosmo: Cosmology = makeCosmology();
 
@@ -15,10 +15,14 @@ export interface Frame {
   t: number;
   /** Polity holding each node at t, or -1. */
   owner: Int32Array;
-  /** Waste-heat luminosity of each node at t, 0 if unheld. */
-  lum: Float32Array;
+  /** Share of each group's starlight showing as waste heat at t (share settled × heat per galaxy), 0 if unheld. */
+  heat: Float32Array;
+  /** Share of each group's galaxies settled at t. */
+  fill: Float32Array;
   /** Nodes held per lineage at t. */
   held: Int32Array;
+  /** Power each lineage harnesses at t, in fully harnessed average groups. */
+  power: Float64Array;
   /** Strikes in flight: index and progress 0..1. */
   inFlight: { s: number; f: number }[];
   /** Strikes that hit within the last fade window: index and age 0..1. */
@@ -30,8 +34,10 @@ export const FADE = 0.3; // Gyr an event stays on screen
 export function computeFrame(r: SimResult, t: number): Frame {
   const n = r.positions.x.length;
   const owner = new Int32Array(n).fill(-1);
-  const lum = new Float32Array(n);
+  const heat = new Float32Array(n);
+  const fill = new Float32Array(n);
   const held = new Int32Array(r.civs.length);
+  const power = new Float64Array(r.civs.length);
   const pol = r.polities;
   for (let k = 0; k < pol.node.length; k++) {
     if (pol.born[k] > t || pol.died[k] <= t) continue;
@@ -41,7 +47,11 @@ export function computeFrame(r: SimResult, t: number): Frame {
     held[lin]++;
     const g = pol.genome.subarray(k * N_TRAITS, (k + 1) * N_TRAITS);
     const floor = r.params.ftlCloak > 0 && r.civs[lin].ftl <= t ? 0 : r.params.stealthFloor;
-    lum[node] = luminosity(tierAt(r.civs[lin].tierTimes, t), t - pol.born[k], r.params.conversionTime, visibility(g, floor), r.positions.mass[node]);
+    const m = maturity(r.civs[lin].tierTimes, t);
+    const f = filled(t - pol.fillStart[k], pol.fillTime[k]);
+    fill[node] = f;
+    heat[node] = f * heatFraction(m, t - pol.born[k], r.params.conversionTime, visibility(g, floor));
+    power[lin] += r.positions.mass[node] * f * heatFraction(m, t - pol.born[k], r.params.conversionTime, 1);
   }
   const st = r.strikes;
   const inFlight: Frame['inFlight'] = [];
@@ -50,7 +60,22 @@ export function computeFrame(r: SimResult, t: number): Frame {
     if (st.launched[s] <= t && st.arrived[s] > t) inFlight.push({ s, f: (t - st.launched[s]) / (st.arrived[s] - st.launched[s]) });
     else if (st.hit[s] && st.arrived[s] <= t && t - st.arrived[s] < FADE) impacts.push({ s, age: (t - st.arrived[s]) / FADE });
   }
-  return { t, owner, lum, held, inFlight, impacts };
+  return { t, owner, heat, fill, held, power, inFlight, impacts };
+}
+
+/**
+ * Waste heat as a 0..1 shade for drawing, on a log scale: a thousandth of a
+ * group's starlight (settling, not yet building) is 0, all of it is 1, so a
+ * group visibly brightens as it fills and its technology climbs.
+ */
+export function heatShade(heat: number): number {
+  return heat > 0 ? Math.max(0, Math.min(1, (Math.log10(heat) + 3) / 3)) : 0;
+}
+
+/** A lineage's power at this moment as a Kardashev number, e.g. "K 3.6", or '—'. */
+export function kardashevLabel(r: SimResult, frame: Frame, lineage: number): string {
+  const k = kardashev(frame.power[lineage], r.universe.galaxiesPerNode);
+  return Number.isFinite(k) ? `K ${k.toFixed(2)}` : '—';
 }
 
 /** Golden-angle hues so neighbouring lineage ids look different. RGB 0..255. */
@@ -81,14 +106,16 @@ export function wrapDelta(a: number, b: number, L: number): number {
 /**
  * The holdings a species could see when it first looked up, recomputed with the
  * simulation's own rules: light that left each node at the right time, from
- * whoever held it then, bright enough after redshift to reach a present-day-class
- * sensor. Inside half the box only, like the simulation's exact part.
+ * whoever held it then, hot enough to stand out from dust and bright enough
+ * after redshift for present-day telescopes. Inside half the box only, like the
+ * simulation's exact part.
  */
 export function whatSaw(r: SimResult, civId: number): { node: number; lineage: number }[] {
   const c = r.civs[civId];
   if (!c.saw) return [];
   const t = c.tTech;
-  const { x, y, z, mass } = r.positions;
+  const { x, y, z } = r.positions;
+  const sensor = humanSensor(r.params);
   const L = r.params.boxGly;
   const intra = (r.params.intraNodeSeeing * L) / Math.cbrt(x.length);
   const pol = r.polities;
@@ -105,10 +132,11 @@ export function whatSaw(r: SimResult, civId: number): { node: number; lineage: n
     const te = cosmo.emission(t, d);
     if (te < pol.born[k] || te >= pol.died[k]) continue;
     const lin = pol.lineage[k];
+    if (lin === civId) continue;
     const g = pol.genome.subarray(k * N_TRAITS, (k + 1) * N_TRAITS);
     const floor = r.params.ftlCloak > 0 && r.civs[lin].ftl <= te ? 0 : r.params.stealthFloor;
-    const lum = luminosity(tierAt(r.civs[lin].tierTimes, te), te - pol.born[k], r.params.conversionTime, visibility(g, floor), mass[node]);
-    if (lum > 0 && d * (a0 / cosmo.a(te)) <= r.params.detectRange * Math.sqrt(lum)) out.push({ node, lineage: lin });
+    const heat = heatFraction(maturity(r.civs[lin].tierTimes, te), te - pol.born[k], r.params.conversionTime, visibility(g, floor));
+    if (canSee(heat, d, cosmo.a(te), a0, r.params.detectRange, sensor)) out.push({ node, lineage: lin });
   }
   return out;
 }
