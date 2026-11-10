@@ -10,7 +10,8 @@
     "check": "node src/cli/check.ts",
     "run": "node src/cli/run.ts",
     "sweep": "node src/cli/sweep.ts",
-    "score": "node src/cli/score.ts"
+    "score": "node src/cli/score.ts",
+    "screenshots": "node scripts/screenshots.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

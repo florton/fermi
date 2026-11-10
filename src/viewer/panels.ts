@@ -51,7 +51,7 @@ export function renderStats(el: HTMLElement, r: SimResult, s: Summary | null, t:
 export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin: number, sightCount: number) {
   if (lin < 0) {
     el.innerHTML =
-      '<p class="muted">Click a territory or a ✶ / o species marker on the map, a lineage below, or a chronicle entry. ' +
+      '<p class="muted">Click a territory or a ✶ / ○ species marker on the map, a lineage below, or a chronicle entry. ' +
       'The map then shows how far their first light has travelled and what they could see when they looked up.</p>';
     return;
   }
@@ -123,8 +123,9 @@ export function renderKinds(el: HTMLElement, r: SimResult, frame: Frame) {
     byKind.set(k, (byKind.get(k) ?? 0) + frame.held[i]);
     total += frame.held[i];
   }
-  if (total === 0 || (byKind.size === 1 && byKind.has('mixed'))) {
-    el.innerHTML = '';
+  if (total === 0 || byKind.size === 1) {
+    const only = [...byKind.keys()][0] ?? '';
+    el.innerHTML = `<span class="muted" style="grid-column: 1 / -1">${total === 0 ? 'No territory yet.' : `Only one kind here (${ARCHETYPES[only]?.label ?? only}); tick more in the Universe menu to compare.`}</span>`;
     return;
   }
   el.innerHTML = [...byKind]

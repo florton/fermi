@@ -34,8 +34,6 @@ export interface Layers {
   labels: boolean;
   /** For the selection: light front, sensor range, and what it saw at first light. */
   reach: boolean;
-  /** Repeat the wrapping box to fill the screen. */
-  wrap: boolean;
   /** The symbol key under the map (drawn by the page, not the canvas). */
   key: boolean;
 }
@@ -79,8 +77,6 @@ export class MapView {
   private last: Frame | null = null;
   /** Tile size on screen, CSS pixels. */
   private tilePx = 11;
-  /** Repeat the wrapping box to fill the screen. */
-  private wrap = true;
   /** Screen space covered by floating panels and bars, CSS pixels: left, top, right, bottom. */
   private insets = [0, 0, 0, 0];
   private meanMass = 1;
@@ -101,6 +97,7 @@ export class MapView {
           const dpr = devicePixelRatio || 1;
           this.camX -= (dx * dpr) / this.scale;
           this.camY -= (dy * dpr) / this.scale;
+          this.clamp();
           drag.x = e.clientX;
           drag.y = e.clientY;
           this.dirty = true;
@@ -144,6 +141,7 @@ export class MapView {
     if (!this.r) return;
     this.camX = this.camY = this.r.params.boxGly / 2;
     this.scale = this.fitScale();
+    this.clamp();
     this.dirty = true;
   }
 
@@ -151,10 +149,12 @@ export class MapView {
   zoomAt(cssX: number, cssY: number, factor: number) {
     const dpr = devicePixelRatio || 1;
     const [wx, wy] = this.toWorld(cssX * dpr, cssY * dpr);
-    this.scale = Math.min(this.fitScale() * 60, Math.max(this.fitScale() * 0.5, this.scale * factor));
+    // Never smaller than the screen: the box is shown once, filling it.
+    this.scale = Math.min(this.fitScale() * 60, Math.max(this.fitScale(), this.scale * factor));
     const [wx2, wy2] = this.toWorld(cssX * dpr, cssY * dpr);
     this.camX += wx - wx2;
     this.camY += wy - wy2;
+    this.clamp();
     this.dirty = true;
   }
 
@@ -163,6 +163,7 @@ export class MapView {
     if (!this.r) return;
     this.camX = this.r.positions.x[node];
     this.camY = this.r.positions.y[node];
+    this.clamp();
     this.dirty = true;
   }
 
@@ -180,6 +181,8 @@ export class MapView {
     this.count = new Int32Array(nCells);
     this.settled = new Int32Array(nCells);
     this.civCell = new Int32Array(nCells);
+    if (this.r) this.scale = Math.max(this.scale, this.fitScale());
+    this.clamp();
     this.dirty = true;
   }
 
@@ -189,10 +192,11 @@ export class MapView {
     this.resize();
   }
 
-  /** Tell the map what the panels cover, so fitting and centring use the clear area between them. */
+  /** Tell the map what the panels cover, so centring on something uses the clear area between them. */
   setInsets(left: number, top: number, right: number, bottom: number) {
     // The camera point is drawn at the centre of the clear area, so it stays put.
     this.insets = [left, top, right, bottom];
+    this.clamp();
     this.dirty = true;
   }
 
@@ -203,47 +207,36 @@ export class MapView {
     return [(dpr * (l - r) + this.canvas.width) / 2, (dpr * (t - b) + this.canvas.height) / 2];
   }
 
+  /** The scale at which the box just covers the whole window: shown once, no margins. */
   private fitScale() {
     if (!this.r) return 1;
-    const dpr = devicePixelRatio || 1;
-    const [l, t, r, b] = this.insets;
-    const w = this.canvas.width - dpr * (l + r);
-    const h = this.canvas.height - dpr * (t + b);
-    return (0.94 * Math.max(100, Math.min(w, h))) / this.r.params.boxGly;
+    return Math.max(100, this.canvas.width, this.canvas.height) / this.r.params.boxGly;
   }
 
-  /**
-   * Call fn with every on-screen position of a point. The box wraps, so with the
-   * wrap layer on, the view repeats it to fill the screen, the way the universe
-   * would look if you could see past an edge. `margin` lets things that extend
-   * right/down from the point (like a box outline) count as on screen.
-   */
-  private eachImage(x: number, y: number, fn: (sx: number, sy: number) => void, margin = 0) {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
-    const [sx0, sy0] = this.toScreen(x, y);
-    if (!this.wrap || !this.r) {
-      if (sx0 + margin >= 0 && sy0 + margin >= 0 && sx0 < W && sy0 < H) fn(sx0, sy0);
-      return;
-    }
-    const step = this.r.params.boxGly * this.scale;
-    const i0 = Math.ceil((-margin - sx0) / step);
-    const i1 = Math.floor((W - 1 - sx0) / step);
-    const j0 = Math.ceil((-margin - sy0) / step);
-    const j1 = Math.floor((H - 1 - sy0) / step);
-    for (let i = i0; i <= i1; i++) {
-      for (let j = j0; j <= j1; j++) fn(sx0 + i * step, sy0 + j * step);
-    }
-  }
-
-  /** The on-screen copy of a point nearest the middle of the clear area. */
-  private nearestImage(x: number, y: number): [number, number] {
+  /** Keep the box covering the window, so panning never reveals empty space past an edge. */
+  private clamp() {
+    if (!this.r) return;
+    const L = this.r.params.boxGly;
     const [ox, oy] = this.origin();
-    let best: [number, number] = this.toScreen(x, y);
-    if (!this.wrap || !this.r) return best;
-    const step = this.r.params.boxGly * this.scale;
-    best = [best[0] - Math.round((best[0] - ox) / step) * step, best[1] - Math.round((best[1] - oy) / step) * step];
-    return best;
+    const axis = (cam: number, o: number, size: number) => {
+      const lo = o / this.scale;
+      const hi = L - (size - o) / this.scale;
+      // Only if the box is narrower than the window (it shouldn't be): centre it.
+      if (lo > hi) return L / 2 + (o - size / 2) / this.scale;
+      return Math.min(hi, Math.max(lo, cam));
+    };
+    this.camX = axis(this.camX, ox, this.canvas.width);
+    this.camY = axis(this.camY, oy, this.canvas.height);
+  }
+
+  /** Call fn with a point's screen position if it is on screen. `margin` lets things that extend right/down from the point count. */
+  private eachImage(x: number, y: number, fn: (sx: number, sy: number) => void, margin = 0) {
+    const [sx, sy] = this.toScreen(x, y);
+    if (sx + margin >= 0 && sy + margin >= 0 && sx < this.canvas.width && sy < this.canvas.height) fn(sx, sy);
+  }
+
+  private nearestImage(x: number, y: number): [number, number] {
+    return this.toScreen(x, y);
   }
 
   private toScreen(x: number, y: number): [number, number] {
@@ -318,7 +311,6 @@ export class MapView {
     const voteCount = new Int32Array(this.count.length);
     const lumSum = new Float32Array(this.count.length);
     const hasSel = new Uint8Array(this.count.length);
-    this.wrap = layers.wrap;
     const bin = (sx: number, sy: number, i: number) => {
       const c = Math.floor(sy / cell) * cols + Math.floor(sx / cell);
       this.count[c]++;
@@ -370,9 +362,10 @@ export class MapView {
       if (this.settled[c] === 0) {
         if (!layers.empty || lod === NEAR) continue;
         if (lod === FAR) {
-          // A faint wash by density, so the cosmic web shows without a field of dots.
-          ctx.fillStyle = `rgba(150,160,180,${(0.05 * Math.min(2.5, n / meanCount)).toFixed(3)})`;
-          ctx.fillRect(x0, y0, cell, cell);
+          // A small point, brighter where groups crowd, so the cosmic web shows quietly.
+          const d = Math.max(1, Math.round(cell * 0.09));
+          ctx.fillStyle = `rgba(150,160,180,${(0.12 + 0.12 * Math.min(2.5, n / meanCount)).toFixed(3)})`;
+          ctx.fillRect(x0 + (cell - d) / 2, y0 + (cell - d) / 2, d, d);
         } else {
           ctx.fillStyle = `rgba(150,160,180,${Math.min(0.55, 0.12 + 0.06 * n)})`;
           ctx.fillText('·', x0 + cell / 2, y0 + cell / 2);
@@ -398,14 +391,15 @@ export class MapView {
         ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.13 * dim})`;
         ctx.fillRect(x0, y0, cell, cell);
       } else if (lod === FAR) {
-        // Solid territory, brighter with more waste heat, with a dark seam where
-        // two lineages meet so neighbouring empires read as separate shapes.
+        // Whole tiles in full colour, brighter with more waste heat, a hairline
+        // apart, and a wider seam where two lineages meet so empires read as shapes.
         const right = c % cols < cols - 1 ? cellLin[c + 1] : lin;
         const below = c + cols < nCells ? cellLin[c + cols] : lin;
-        const seamR = right >= 0 && right !== lin ? 1 : 0;
-        const seamB = below >= 0 && below !== lin ? 1 : 0;
-        ctx.fillStyle = `rgba(${cr},${cg},${cb},${(dim * (0.25 + 0.5 * heat)).toFixed(3)})`;
-        ctx.fillRect(x0, y0, cell - seamR, cell - seamB);
+        const gap = Math.max(1, Math.round(cell * 0.06));
+        const gapR = right >= 0 && right !== lin ? 2 * gap : gap;
+        const gapB = below >= 0 && below !== lin ? 2 * gap : gap;
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${(dim * (0.5 + 0.5 * heat)).toFixed(3)})`;
+        ctx.fillRect(x0, y0, cell - gapR, cell - gapB);
       } else {
         // A tile that fills out and brightens as its starlight is converted to waste heat.
         const shade = Math.min(3, Math.floor(heat * 4));
@@ -417,12 +411,11 @@ export class MapView {
 
     if (lod === NEAR) this.drawGroups(ctx, r, frame, slice, layers, selLineage);
 
-    // Box edges: one copy, or every repeat when the wrap fills the screen.
+    // The box's edge, seen only when zoomed to it.
     ctx.strokeStyle = '#1d2230';
     ctx.lineWidth = 1;
-    if (this.wrap) ctx.setLineDash([6, 6]);
-    this.eachImage(0, 0, (bx, by) => ctx.strokeRect(bx, by, L * this.scale, L * this.scale), L * this.scale);
-    ctx.setLineDash([]);
+    const [bx, by] = this.toScreen(0, 0);
+    ctx.strokeRect(bx, by, L * this.scale, L * this.scale);
 
     if (layers.strikes) this.drawStrikes(ctx, r, frame, selLineage, slice, lod);
     if (layers.species) this.drawSpecies(ctx, r, frame, slice, lod);
@@ -606,7 +599,6 @@ export class MapView {
     const c = r.civs[civId];
     const L = r.params.boxGly;
     const { x, y } = r.positions;
-    // With the wrap on there are many copies of their home; annotate the one nearest the middle.
     const [ox, oy] = this.nearestImage(x[c.node], y[c.node]);
     const dpr = devicePixelRatio || 1;
     ctx.save();

@@ -58,7 +58,6 @@ const LAYER_NAMES: [keyof Layers, string][] = [
   ['strikes', 'Strikes and impacts'],
   ['labels', 'Lineage names'],
   ['reach', 'Selection: light front, sensors, what it saw'],
-  ['wrap', 'Repeat the box to fill the screen (it wraps)'],
   ['key', 'Show the symbol key'],
 ];
 
@@ -204,7 +203,7 @@ function readParams(): Partial<SimParams> {
 }
 
 // ── Layers ─────────────────────────────────────────────────────────────────
-const layers: Layers = { territory: true, empty: true, species: true, strikes: true, labels: true, reach: true, wrap: true, key: true };
+const layers: Layers = { territory: true, empty: true, species: true, strikes: true, labels: true, reach: true, key: true };
 const layersEl = $('layers');
 layersEl.innerHTML =
   LAYER_NAMES.map(([k, label]) => `<label><input type="checkbox" data-layer="${k}" checked /> ${label}</label>`).join('') +
