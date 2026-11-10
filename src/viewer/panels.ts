@@ -12,16 +12,29 @@ const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(1)}%` : '�
 const gyr = (x: number) => (Number.isFinite(x) ? `${x.toFixed(2)} Gyr` : '—');
 const swatch = (lin: number) => `<i class="sw" style="background:rgb(${lineageRgb(lin).join(',')})"></i>`;
 
-export function renderStats(el: HTMLElement, r: SimResult, s: Summary, t: number) {
+/** `s` is null while the run is still being simulated: the whole-run figures come at the end. */
+export function renderStats(el: HTMLElement, r: SimResult, s: Summary | null, t: number) {
   let cur = r.series[0];
   for (const p of r.series) if (p.t <= t) cur = p;
-  const rows: [string, string][] = [
+  if (!cur) {
+    el.innerHTML = '<span>Starting…</span><span></span>';
+    return;
+  }
+  const live: [string, string][] = [
     ['Groups settled', pct(cur.settled)],
     ['Lineages alive', String(cur.lineagesAlive)],
     ['Observers so far', String(cur.observers)],
     ['…who saw an empty sky', cur.observers ? pct(cur.silent / cur.observers) : '—'],
     ['Strikes fired so far', String(cur.strikes)],
     ['', ''],
+  ];
+  if (!s) {
+    live.push(['Whole-run figures', 'when the simulation finishes'], ['Each group stands for', `${Math.round(r.universe.galaxiesPerNode)} galaxies`]);
+    el.innerHTML = live.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
+    return;
+  }
+  const rows: [string, string][] = [
+    ...live,
     ['Technological origins (run)', String(s.origins)],
     ['Preempted · filtered · stayed home', `${s.fates.preempted} · ${s.fates.filtered} · ${s.fates.quiet + s.fates.engulfed}`],
     ['Expanded', String(s.fates.expanding)],
@@ -84,15 +97,15 @@ export function renderInspector(el: HTMLElement, r: SimResult, frame: Frame, lin
       <span>Started as</span><span>${ARCHETYPES[c.archetype]?.label ?? c.archetype}</span>
       <span>Alliance</span><span>${c.alliance === c.id ? (allianceSize(r, c.id) > 1 ? 'leads one' : 'none') : `with the ${r.civs[c.alliance].name}`}</span>
       <span>Saw at first light</span><span>${saw}</span>
-      <span>Holdings visible to them then</span><span>${c.saw ? `${sightCount}${sightCount ? ' (orange lines)' : ''}` : '—'}</span>
+      <span>Colonies visible to them then</span><span>${c.saw ? `${sightCount}${sightCount ? ' (orange lines)' : ''}` : '—'}</span>
       <span>Faster-than-light channel</span><span>${Number.isFinite(c.ftl) ? `from ${gyr(c.ftl)}` : 'no'}</span>
       <span>Fate</span><span>${c.fate}</span>
-      <span>Groups held now · peak</span><span>${frame.held[lin]} · ${c.peak}</span>
+      <span>Territory now · peak, groups</span><span>${frame.held[lin]} · ${c.peak}</span>
       <span>Technology now</span><span>${tierName(r, lin, t)}</span>
       <span>Strikes fired · groups lost to strikes</span><span>${fired} · ${suffered}</span>
       <span>Their first light has reached</span><span>${born ? `${lightFront(c.tTech, t).toFixed(2)} Gly` : '—'}</span>
     </div>
-    <h3>Traits <small>shaded: at origin · tick: mean of living holdings now</small></h3>
+    <h3>Traits <small>shaded: at origin · tick: mean of living colonies now</small></h3>
     ${bars}`;
 }
 
@@ -100,7 +113,7 @@ function allianceSize(r: SimResult, root: number): number {
   return r.civs.reduce((n, c) => n + (c.alliance === root ? 1 : 0), 0);
 }
 
-/** Share of held groups by the kind of civilisation each lineage started as. */
+/** Share of settled groups by the kind of civilisation each lineage started as. */
 export function renderKinds(el: HTMLElement, r: SimResult, frame: Frame) {
   const byKind = new Map<string, number>();
   let total = 0;
@@ -125,7 +138,7 @@ export function renderLineages(el: HTMLElement, r: SimResult, frame: Frame, sele
   for (let i = 0; i < frame.held.length; i++) if (frame.held[i] > 0) ids.push(i);
   ids.sort((a, b) => frame.held[b] - frame.held[a]);
   if (ids.length === 0) {
-    el.innerHTML = '<li class="muted">No one holds anything yet.</li>';
+    el.innerHTML = '<li class="muted">No territory yet.</li>';
     return;
   }
   el.innerHTML = ids

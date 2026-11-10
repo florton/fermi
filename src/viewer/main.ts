@@ -1,7 +1,7 @@
 /**
- * The viewer. The simulation runs to completion in a worker first; the timeline
- * then replays its recorded history, so scrubbing is free and nothing is
- * re-simulated. The map fills the screen; panels float over it and can be hidden.
+ * The viewer. The simulation runs in a worker and streams its history here as
+ * it goes, so playback starts at once and follows the simulated edge; once
+ * recorded, any moment can be scrubbed to without re-simulating. The map fills the screen; panels float over it and can be hidden.
  */
 
 import { TRAITS } from '../core/genome.ts';
@@ -13,6 +13,8 @@ import type { Summary } from '../core/summary.ts';
 import { MapView, type Layers, type Slice } from './map2d.ts';
 import { TRAIT_COLORS, buildChronicle, drawTraits, renderInspector, renderKinds, renderLineages, renderStats, updateChronicle } from './panels.ts';
 import { computeFrame, whatSaw, type Frame } from './state.ts';
+import { applyDynamic, unpackStatic } from './civpack.ts';
+import type { WorkerMessage } from './worker.ts';
 import { Timeline } from './timeline.ts';
 
 const FIELDS: [key: string, label: string, step: number][] = [
@@ -236,6 +238,12 @@ let t = 0;
 let selected = -1;
 let playing = false;
 let simulating = false;
+/** How far the simulation has got; playback can't pass it. */
+let simT = 0;
+/** Which request the worker's replies should answer. */
+let runId = 0;
+/** Latest moment that can be shown. */
+const limit = () => (result ? (simulating ? simT : result.params.tEnd) : 0);
 /** The settings no longer match the universe on screen, so the main button runs instead of plays. */
 let stale = true;
 const slice = (): Slice => ({ center: Number(sliceC.value), width: Number(sliceW.value) });
@@ -256,39 +264,66 @@ map.onHover = (html, x, y) => {
 timeline.onScrub = (tt) => setTime(tt);
 
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
-type WorkerMessage = { progress: number; summarizing?: boolean } | { result: SimResult; summary: Summary };
 worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
-  if ('progress' in e.data) {
-    showProgress(e.data.progress, e.data.summarizing ? 'Measuring what everyone saw…' : undefined);
+  const msg = e.data;
+  if (msg.run !== runId) return;
+  if (msg.kind === 'summary') {
+    summary = msg.summary;
+    refreshPanels(true);
     return;
   }
-  hideProgress();
-  result = e.data.result;
-  summary = e.data.summary;
-  simulating = false;
-  stale = false;
-  overlay.textContent = '';
-  nowBtn.disabled = false;
-  newSeedBtn.hidden = false;
-  selected = -1;
-  map.sight = [];
-  buildChronicle(chronicleEl, result);
-  updateInsets();
-  map.setResult(result);
-  timeline.setResult(result);
-  resizeTraits();
-  setTime(timeline.t0);
+  simT = msg.simT;
+  if (msg.civStatic && msg.positions) {
+    // The first picture of a new universe.
+    hideProgress();
+    const civs = unpackStatic(msg.civStatic);
+    applyDynamic(civs, msg.civs);
+    result = { ...msg.snap, civs, positions: msg.positions };
+    summary = null;
+    overlay.textContent = '';
+    nowBtn.disabled = false;
+    newSeedBtn.hidden = false;
+    selected = -1;
+    map.sight = [];
+    updateInsets();
+    map.setResult(result);
+    timeline.setResult(result);
+    chronicleLength = -1;
+    resizeTraits();
+    setTime(timeline.t0);
+    setPlaying(true);
+  } else if (result) {
+    applyDynamic(result.civs, msg.civs);
+    result = { ...msg.snap, civs: result.civs, positions: result.positions };
+    map.update(result);
+    timeline.update(result);
+  }
+  if (!result) return;
+  timeline.simT = simT;
+  if (msg.done) {
+    simulating = false;
+    timeline.simT = Infinity;
+  }
+  if (result.chronicle.length !== chronicleLength) {
+    chronicleLength = result.chronicle.length;
+    buildChronicle(chronicleEl, result);
+  }
+  setTime(t);
   updateMainButton();
 };
+let chronicleLength = -1;
 
 function simulate() {
   simulating = true;
+  stale = false;
+  simT = 0;
   overlay.textContent = '';
   simStarted = performance.now();
-  showProgress(0);
+  showProgress(0, 'Placing galaxies and seeding life…');
   setPlaying(false);
   updateMainButton();
   worker.postMessage(readParams());
+  runId++;
 }
 
 // ── Progress ───────────────────────────────────────────────────────────────
@@ -317,11 +352,9 @@ function markStale() {
 
 /** One button: Run while the settings are new, then Play / Pause for the universe they made. */
 function updateMainButton() {
-  runBtn.disabled = simulating;
-  newSeedBtn.disabled = simulating;
-  if (simulating) runBtn.textContent = 'Simulating…';
-  else if (stale || !result) runBtn.textContent = result ? 'Run new settings' : 'Run';
+  if (stale || !result) runBtn.textContent = result ? 'Run new settings' : 'Run';
   else runBtn.textContent = playing ? '❚❚ Pause' : '▶ Play';
+  runBtn.disabled = simulating && !result;
 }
 
 function setPlaying(on: boolean) {
@@ -330,8 +363,8 @@ function setPlaying(on: boolean) {
 }
 
 function togglePlay() {
-  if (!result || simulating) return;
-  if (t >= result.params.tEnd) setTime(timeline.t0);
+  if (!result) return;
+  if (!simulating && t >= result.params.tEnd) setTime(timeline.t0);
   setPlaying(!playing);
 }
 
@@ -349,7 +382,7 @@ newSeedBtn.onclick = () => {
 document.addEventListener('click', (e) => {
   if (e.target instanceof HTMLButtonElement) e.target.blur();
 });
-nowBtn.onclick = () => result && setTime(result.cosmology.age);
+nowBtn.onclick = () => result && setTime(Math.min(limit(), result.cosmology.age));
 sliceC.oninput = sliceW.oninput = () => (map.dirty = true);
 $('recenter').onclick = () => map.reset();
 $('fullscreen').onclick = () => toggleFullscreen();
@@ -470,7 +503,7 @@ window.addEventListener('keydown', (e) => {
 // ── Time ───────────────────────────────────────────────────────────────────
 function setTime(next: number) {
   if (!result) return;
-  t = Math.max(timeline.t0, Math.min(result.params.tEnd, next));
+  t = Math.max(timeline.t0, Math.min(limit(), next));
   const age = result.cosmology.age;
   tlabel.textContent = `${t.toFixed(2)} Gyr${Math.abs(t - age) < 0.15 ? ' · today' : ''}`;
   frame = computeFrame(result, t);
@@ -482,7 +515,7 @@ function setTime(next: number) {
 
 let panelsDue = 0;
 function refreshPanels(force = false) {
-  if (!result || !summary || !frame) return;
+  if (!result || !frame) return;
   // While playing, the sidebar doesn't need 60 updates a second.
   const now = performance.now();
   if (playing && !force && now < panelsDue) return;
@@ -494,16 +527,29 @@ function refreshPanels(force = false) {
   drawTraits(traitsCanvas, result, t);
 }
 
+// The key says what zooming will add.
+const LOD_HINTS = ['zoom in for detail', 'zoom in to see single groups', 'each disc a galaxy group, filled by its waste heat'];
+const keyLod = $('key-lod');
+let shownLevel = -1;
+
 let last = performance.now();
 function tick(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (playing && result) {
     const next = t + dt * Number(speedSel.value);
-    if (next >= result.params.tEnd) setPlaying(false);
-    setTime(next);
+    // At the simulated edge, wait for more; at the end of the run, stop.
+    if (!simulating && next >= result.params.tEnd) setPlaying(false);
+    if (next <= limit() || t < limit()) setTime(next);
+    else timeline.draw(t);
   }
-  if (frame && map.dirty) map.render(frame, selected, slice(), layers);
+  if (frame && map.dirty) {
+    map.render(frame, selected, slice(), layers);
+    if (map.level !== shownLevel) {
+      shownLevel = map.level;
+      keyLod.textContent = LOD_HINTS[shownLevel];
+    }
+  }
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);

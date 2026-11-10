@@ -18,6 +18,8 @@ export class Timeline {
    * formation, so the view begins shortly before the first species appears.
    */
   t0 = 0;
+  /** How far the simulation has got while it is still running; Infinity once done. */
+  simT = Infinity;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -37,9 +39,15 @@ export class Timeline {
   }
 
   setResult(r: SimResult) {
-    this.r = r;
     const first = r.civs.reduce((m, c) => Math.min(m, c.tTech), Infinity);
     this.t0 = Number.isFinite(first) ? Math.max(0, Math.floor(first - 0.5)) : 0;
+    this.update(r);
+    this.resize();
+  }
+
+  /** More of the same run: rebin, keep the start. */
+  update(r: SimResult) {
+    this.r = r;
     const bins = 400;
     const span = r.params.tEnd - this.t0;
     this.strikeBins = new Float32Array(bins);
@@ -49,7 +57,6 @@ export class Timeline {
       this.strikeBins[b]++;
     }
     this.strikeMax = Math.max(1, ...this.strikeBins);
-    this.resize();
   }
 
   resize() {
@@ -93,6 +100,21 @@ export class Timeline {
       const silent = c.saw.lineages === 0 && !c.saw.far;
       ctx.fillStyle = silent ? 'rgba(255,255,255,0.55)' : 'rgba(255,170,90,0.7)';
       ctx.fillRect(X(c.tTech), 0, Math.max(1, dpr), 5 * dpr);
+    }
+
+    // Not simulated yet: dimmed, with the edge marked.
+    if (this.simT < tEnd) {
+      const ex = Math.max(0, X(this.simT));
+      ctx.fillStyle = 'rgba(5,6,10,0.6)';
+      ctx.fillRect(ex, 0, w - ex, h);
+      // The edge breathes, so it reads as work in progress.
+      const pulse = 0.55 + 0.35 * Math.sin(performance.now() / 250);
+      ctx.fillStyle = `rgba(138,180,255,${pulse})`;
+      ctx.fillRect(ex - dpr, 0, 2 * dpr, h);
+      ctx.font = `${Math.round(10 * dpr)}px system-ui, sans-serif`;
+      const label = `simulating ${this.simT.toFixed(1)} Gyr…`;
+      const lw = ctx.measureText(label).width;
+      ctx.fillText(label, Math.min(ex + 4 * dpr, w - lw - 2 * dpr), 12 * dpr);
     }
 
     // Today, and the cursor.

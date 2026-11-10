@@ -42,7 +42,7 @@ import {
   visibility,
   type Genome,
 } from './genome.ts';
-import { EventQueue } from './heap.ts';
+import { EventQueue, type Event } from './heap.ts';
 import { lineageName } from './names.ts';
 import type { SimParams } from './params.ts';
 import { exponential, mulberry32 } from './rng.ts';
@@ -189,8 +189,25 @@ const CENSUS_BINS = 64;
 const CENSUS_MIN = 0.01;
 const CENSUS_PER_DECADE = 16;
 
+/** A run in progress, advanced a slice at a time. */
+export interface SimRun {
+  /** Simulate until the wall clock passes `deadline` (performance.now() ms) or the run ends; true once it has ended. */
+  advance(deadline: number): boolean;
+  /** Simulated time reached: the history up to here is final. */
+  readonly time: number;
+  readonly done: boolean;
+  /** The run so far, as fresh arrays. */
+  result(): SimResult;
+}
+
 /** `onProgress` is called now and then with the fraction of simulated time done, 0..1. */
 export function runSim(p: SimParams, onProgress?: (fraction: number) => void): SimResult {
+  const run = startSim(p, onProgress);
+  run.advance(Infinity);
+  return run.result();
+}
+
+export function startSim(p: SimParams, onProgress?: (fraction: number) => void): SimRun {
   const started = performance.now();
   const rng = mulberry32(p.seed);
   const cosmo: Cosmology = makeCosmology();
@@ -604,15 +621,40 @@ export function runSim(p: SimParams, onProgress?: (fraction: number) => void): S
   };
 
   // ── Event loop ───────────────────────────────────────────────────────────
+  // Runs in slices so a viewer can show the history as it is made: everything up
+  // to `simT` is final, since events are handled in time order.
   let events = 0;
   let truncated = false;
-  for (let ev = q.pop(); ev; ev = q.pop()) {
-    const t = ev.t;
-    if (t > p.tEnd) break;
-    if (++events > p.maxEvents) {
-      truncated = true;
-      break;
+  let done = false;
+  let simT = 0;
+  let busyMs = performance.now() - started;
+  /** Handle events until the wall clock passes `deadline` (ms) or the run ends; true when it has ended. */
+  const advance = (deadline: number): boolean => {
+    if (done) return true;
+    const sliceStart = performance.now();
+    let n = 0;
+    try {
+      for (;;) {
+        if ((++n & 0x3ff) === 0 && performance.now() > deadline) return false;
+        const ev = q.pop();
+        if (!ev || ev.t > p.tEnd) break;
+        if (++events > p.maxEvents) {
+          truncated = true;
+          break;
+        }
+        step(ev);
+      }
+      done = true;
+      simT = p.tEnd;
+      return true;
+    } finally {
+      busyMs += performance.now() - sliceStart;
     }
+  };
+
+  const step = (ev: Event) => {
+    const t = ev.t;
+    simT = t;
     if (onProgress && (events & 0x3fff) === 0) onProgress(t / p.tEnd);
     switch (ev.kind) {
       case EMERGE: {
@@ -915,8 +957,12 @@ export function runSim(p: SimParams, onProgress?: (fraction: number) => void): S
         break;
       }
     }
-  }
+  };
 
+  return { advance, get time() { return simT; }, get done() { return done; }, result: snapshot };
+
+  /** The run so far as a self-contained result: fresh arrays, safe to hand to another thread. */
+  function snapshot(): SimResult {
   for (const c of civs) c.alliance = allyOf(c.id);
 
   const np = pNode.length;
@@ -950,9 +996,10 @@ export function runSim(p: SimParams, onProgress?: (fraction: number) => void): S
     series,
     chronicle: chronicle.sort((a, b) => a.t - b.t),
     positions: { x: uni.x, y: uni.y, z: uni.z, mass: uni.mass },
-    runtimeMs: performance.now() - started,
+    runtimeMs: busyMs,
     events,
     truncated,
     tally,
   };
+  }
 }

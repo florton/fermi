@@ -1,17 +1,18 @@
 /**
  * The map: a top-down tile view of a depth slice through the box, one tile per
  * screen cell. Cell size is fixed on screen, so zooming in resolves finer
- * structure rather than drawing bigger blocks.
+ * structure rather than drawing bigger blocks, and detail fills in as it does:
  *
- *   ·   unsettled galaxy groups (brighter = more of them)
- *   ■   held territory: the tile fills out and brightens as its starlight is
- *       converted to waste heat, so young holdings are small and dim
- *   ✶   a species becoming technological (white: saw an empty sky)
- *   o   a species that stayed home
- *   x   a strike or berserker kill landing
+ *   far   territory as solid shapes, brighter with more waste heat, with seams
+ *         where lineages meet; empty space as a faint density wash; new species
+ *         as small sparks; strikes as faint lines
+ *   mid   territory tiles that fill out as starlight turns to waste heat; empty
+ *         groups as dots; ✶ for new species, faint rings for ones that stayed home
+ *   near  every galaxy group as a disc sized by mass, ringed in its lineage's
+ *         colour and filled by its waste heat; stay-at-homes ringed and named
  *
  * Drag to pan, wheel to zoom, click to select: a species marker if there is one
- * under the cursor, otherwise the lineage holding most of that cell.
+ * under the cursor, otherwise the lineage with most of that cell.
  */
 
 import { TIERS, tierAt } from '../core/tech.ts';
@@ -48,6 +49,11 @@ export function inSlice(z: number, L: number, s: Slice): boolean {
 
 const MONO = 'ui-monospace, Consolas, monospace';
 
+/** Levels of detail: zoomed out, in between, close enough to see single galaxy groups. */
+export const FAR = 0;
+export const MID = 1;
+export const NEAR = 2;
+
 export class MapView {
   readonly canvas: HTMLCanvasElement;
   onPick: (civ: number) => void = () => {};
@@ -55,6 +61,8 @@ export class MapView {
   dirty = true;
   /** Nodes the selected species saw at first light, set by the caller. */
   sight: { node: number; lineage: number }[] = [];
+  /** Level of detail the last frame was drawn at. */
+  level = FAR;
 
   private r: SimResult | null = null;
   private camX = 0;
@@ -75,6 +83,7 @@ export class MapView {
   private wrap = true;
   /** Screen space covered by floating panels and bars, CSS pixels: left, top, right, bottom. */
   private insets = [0, 0, 0, 0];
+  private meanMass = 1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -118,8 +127,17 @@ export class MapView {
 
   setResult(r: SimResult) {
     this.r = r;
+    let m = 0;
+    for (const v of r.positions.mass) m += v;
+    this.meanMass = m / Math.max(1, r.positions.mass.length) || 1;
     this.resize();
     this.reset();
+  }
+
+  /** More of the same run has arrived: keep the camera where it is. */
+  update(r: SimResult) {
+    this.r = r;
+    this.dirty = true;
   }
 
   reset() {
@@ -323,23 +341,45 @@ export class MapView {
       this.eachImage(x[i], y[i], (sx, sy) => bin(sx, sy, i));
     }
 
+    const lod = this.lod(slice);
+    this.level = lod;
+    const nCells = this.count.length;
+    // Each cell's face lineage, or -1, so frontiers between lineages can be drawn.
+    const cellLin = new Int32Array(nCells).fill(-1);
+    let binned = 0;
+    let occupied = 0;
+    for (let c = 0; c < nCells; c++) {
+      if (this.settled[c] > 0) cellLin[c] = lineageOf[this.vote[c]];
+      if (this.count[c] > 0) {
+        binned += this.count[c];
+        occupied++;
+      }
+    }
+    const meanCount = occupied ? binned / occupied : 1;
+
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = `${cell}px ${MONO}`;
     // Largest cell of each lineage on screen, for labels.
     const labelAt = new Map<number, { c: number; n: number; cells: number }>();
-    for (let c = 0; c < this.count.length; c++) {
+    for (let c = 0; c < nCells; c++) {
       const n = this.count[c];
       if (n === 0) continue;
-      const cx = (c % cols) * cell + cell / 2;
-      const cy = Math.floor(c / cols) * cell + cell / 2;
+      const x0 = (c % cols) * cell;
+      const y0 = Math.floor(c / cols) * cell;
       if (this.settled[c] === 0) {
-        if (!layers.empty) continue;
-        ctx.fillStyle = `rgba(150,160,180,${Math.min(0.7, 0.18 + 0.08 * n)})`;
-        ctx.fillText('·', cx, cy);
+        if (!layers.empty || lod === NEAR) continue;
+        if (lod === FAR) {
+          // A faint wash by density, so the cosmic web shows without a field of dots.
+          ctx.fillStyle = `rgba(150,160,180,${(0.05 * Math.min(2.5, n / meanCount)).toFixed(3)})`;
+          ctx.fillRect(x0, y0, cell, cell);
+        } else {
+          ctx.fillStyle = `rgba(150,160,180,${Math.min(0.55, 0.12 + 0.06 * n)})`;
+          ctx.fillText('·', x0 + cell / 2, y0 + cell / 2);
+        }
         continue;
       }
-      const lin = lineageOf[this.vote[c]];
+      const lin = cellLin[c];
       const best = labelAt.get(lin);
       if (!best) labelAt.set(lin, { c, n: this.settled[c], cells: 1 });
       else {
@@ -353,12 +393,29 @@ export class MapView {
       const heat = Math.min(1, Math.sqrt(lumSum[c] / this.settled[c]));
       const [cr, cg, cb] = lineageRgb(lin);
       const dim = selLineage >= 0 && !hasSel[c] ? 0.18 : 1;
-      // A tile that fills out and brightens as its starlight is converted to waste heat.
-      const shade = Math.min(3, Math.floor(heat * 4));
-      const inset = (cell * (3 - shade)) / 10;
-      ctx.fillStyle = `rgba(${cr},${cg},${cb},${dim * (0.4 + 0.2 * shade)})`;
-      ctx.fillRect(cx - cell / 2 + inset + 0.5, cy - cell / 2 + inset + 0.5, cell - 2 * inset - 1, cell - 2 * inset - 1);
+      if (lod === NEAR) {
+        // Up close the galaxy groups themselves carry the detail; the cell is a faint wash.
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.13 * dim})`;
+        ctx.fillRect(x0, y0, cell, cell);
+      } else if (lod === FAR) {
+        // Solid territory, brighter with more waste heat, with a dark seam where
+        // two lineages meet so neighbouring empires read as separate shapes.
+        const right = c % cols < cols - 1 ? cellLin[c + 1] : lin;
+        const below = c + cols < nCells ? cellLin[c + cols] : lin;
+        const seamR = right >= 0 && right !== lin ? 1 : 0;
+        const seamB = below >= 0 && below !== lin ? 1 : 0;
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${(dim * (0.25 + 0.5 * heat)).toFixed(3)})`;
+        ctx.fillRect(x0, y0, cell - seamR, cell - seamB);
+      } else {
+        // A tile that fills out and brightens as its starlight is converted to waste heat.
+        const shade = Math.min(3, Math.floor(heat * 4));
+        const inset = (cell * (3 - shade)) / 10;
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${dim * (0.4 + 0.2 * shade)})`;
+        ctx.fillRect(x0 + inset + 0.5, y0 + inset + 0.5, cell - 2 * inset - 1, cell - 2 * inset - 1);
+      }
     }
+
+    if (lod === NEAR) this.drawGroups(ctx, r, frame, slice, layers, selLineage);
 
     // Box edges: one copy, or every repeat when the wrap fills the screen.
     ctx.strokeStyle = '#1d2230';
@@ -367,17 +424,71 @@ export class MapView {
     this.eachImage(0, 0, (bx, by) => ctx.strokeRect(bx, by, L * this.scale, L * this.scale), L * this.scale);
     ctx.setLineDash([]);
 
-    if (layers.strikes) this.drawStrikes(ctx, r, frame, selLineage, slice);
-    if (layers.species) this.drawSpecies(ctx, r, frame, slice);
-    if (layers.labels) this.drawLabels(ctx, r, labelAt, selLineage);
+    if (layers.strikes) this.drawStrikes(ctx, r, frame, selLineage, slice, lod);
+    if (layers.species) this.drawSpecies(ctx, r, frame, slice, lod);
+    if (layers.labels) this.drawLabels(ctx, r, labelAt, selLineage, lod);
     if (selected >= 0 && layers.reach) this.drawSelection(ctx, r, frame, selected);
   }
 
-  private drawStrikes(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, sel: number, slice: Slice) {
+  /**
+   * How much detail the current zoom can carry, from how far apart neighbouring
+   * galaxy groups land on screen: far, many to a tile; mid, a few; near, each
+   * group distinct.
+   */
+  private lod(slice: Slice): number {
+    if (!this.r) return FAR;
+    const inView = this.r.positions.x.length * Math.min(1, slice.width);
+    const spacing = ((this.r.params.boxGly / Math.sqrt(Math.max(1, inView))) * this.scale) / this.cell;
+    return spacing >= 1.4 ? NEAR : spacing >= 0.45 ? MID : FAR;
+  }
+
+  /** Up close: each galaxy group in the slab as a disc sized by its mass; held ones ringed in their lineage's colour and filled as their starlight turns to waste heat. */
+  private drawGroups(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, slice: Slice, layers: Layers, sel: number) {
+    const { x, y, z, mass } = r.positions;
+    const L = r.params.boxGly;
+    const lineageOf = r.polities.lineage;
+    const dpr = devicePixelRatio || 1;
+    const inView = x.length * Math.min(1, slice.width);
+    const spacingPx = (L / Math.sqrt(Math.max(1, inView))) * this.scale;
+    const base = Math.min(this.cell * 0.45, spacingPx * 0.28);
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    ctx.lineWidth = Math.max(1, 1.3 * dpr);
+    for (let i = 0; i < x.length; i++) {
+      if (!inSlice(z[i], L, slice)) continue;
+      const rad = Math.max(1.2 * dpr, base * Math.cbrt(mass[i] / this.meanMass));
+      const o = frame.owner[i];
+      if (o < 0) {
+        if (!layers.empty) continue;
+        ctx.fillStyle = 'rgba(150,160,180,0.45)';
+      } else if (!layers.territory) continue;
+      this.eachImage(x[i], y[i], (sx, sy) => {
+        if (sx < -rad || sy < -rad || sx > W + rad || sy > H + rad) return;
+        ctx.beginPath();
+        ctx.arc(sx, sy, o < 0 ? rad * 0.6 : rad, 0, Math.PI * 2);
+        if (o < 0) {
+          ctx.fill();
+          return;
+        }
+        const lin = lineageOf[o];
+        const [cr, cg, cb] = lineageRgb(lin);
+        const dim = sel >= 0 && lin !== sel ? 0.25 : 1;
+        const heat = Math.min(1, Math.sqrt(frame.lum[i]));
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${(dim * (0.12 + 0.8 * heat)).toFixed(3)})`;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.9 * dim})`;
+        ctx.stroke();
+      });
+    }
+  }
+
+  private drawStrikes(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, sel: number, slice: Slice, lod: number) {
     const st = r.strikes;
     const { x, y, z } = r.positions;
     const L = r.params.boxGly;
-    ctx.lineWidth = Math.max(1, this.cell / 8);
+    const far = lod === FAR;
+    const dot = this.cell * 0.18;
+    ctx.lineWidth = far ? 1 : Math.max(1, this.cell / 8);
     ctx.font = `${this.cell}px ${MONO}`;
     for (const { s, f } of frame.inFlight) {
       if (!inSlice(z[st.from[s]], L, slice) && !inSlice(z[st.to[s]], L, slice)) continue;
@@ -388,55 +499,93 @@ export class MapView {
       const hy = f * wrapDelta(y[a], y[b], L) * this.scale;
       const [cr, cg, cb] = lineageRgb(st.lineage[s]);
       const dim = sel >= 0 && st.lineage[s] !== sel && st.victim[s] !== sel ? 0.25 : 1;
-      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.6 * dim})`;
-      ctx.fillStyle = `rgba(255,255,255,${dim})`;
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${(far ? 0.35 : 0.6) * dim})`;
+      ctx.fillStyle = `rgba(255,255,255,${(far ? 0.7 : 1) * dim})`;
       this.eachImage(x[a], y[a], (sx, sy) => {
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.lineTo(sx + hx, sy + hy);
         ctx.stroke();
-        ctx.fillText('•', sx + hx, sy + hy);
+        if (far) ctx.fillRect(sx + hx - dot / 2, sy + hy - dot / 2, dot, dot);
+        else ctx.fillText('•', sx + hx, sy + hy);
       });
     }
     for (const { s, age } of frame.impacts) {
       const b = st.to[s];
       if (!inSlice(z[b], L, slice)) continue;
       ctx.fillStyle = `rgba(255,80,60,${1 - age})`;
-      this.eachImage(x[b], y[b], (sx, sy) => ctx.fillText('x', sx, sy));
+      if (far) this.eachImage(x[b], y[b], (sx, sy) => ctx.fillRect(sx - dot, sy - dot, 2 * dot, 2 * dot));
+      else this.eachImage(x[b], y[b], (sx, sy) => ctx.fillText('x', sx, sy));
     }
   }
 
-  private drawSpecies(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, slice: Slice) {
+  /**
+   * New species flash as they look up (white: saw no one; orange: saw someone).
+   * Ones that stayed home are marked only once there's room: a faint ring in
+   * the middle zoom, a ring and their name up close.
+   */
+  private drawSpecies(ctx: CanvasRenderingContext2D, r: SimResult, frame: Frame, slice: Slice, lod: number) {
     const { x, y, z } = r.positions;
     const L = r.params.boxGly;
     const cell = this.cell;
+    const dpr = devicePixelRatio || 1;
+    const mark = (id: number, sx: number, sy: number) => {
+      const c = Math.floor(sy / cell) * this.cols + Math.floor(sx / cell);
+      if (c >= 0 && c < this.civCell.length) this.civCell[c] = id;
+    };
     for (const c of r.civs) {
       if (!inSlice(z[c.node], L, slice) || c.fate === 'preempted') continue;
       const age = frame.t - c.tTech;
       if (age < 0) continue;
-      const stayed = (c.fate === 'quiet' || c.fate === 'engulfed') && c.tFate <= frame.t;
-      let glyph: string;
       if (age < FADE) {
         const silent = c.saw && c.saw.lineages === 0 && !c.saw.far;
-        ctx.fillStyle = silent ? `rgba(255,255,255,${1 - age / FADE})` : `rgba(255,170,90,${1 - age / FADE})`;
-        ctx.font = `bold ${Math.round(cell * 1.4)}px ${MONO}`;
-        glyph = '✶';
-      } else if (stayed) {
-        ctx.fillStyle = 'rgba(230,235,245,0.8)';
-        ctx.font = `${cell}px ${MONO}`;
-        glyph = 'o';
-      } else continue;
+        const alpha = 1 - age / FADE;
+        const a = lod === FAR ? 0.8 * alpha : alpha;
+        ctx.fillStyle = silent ? `rgba(255,255,255,${a})` : `rgba(255,170,90,${a})`;
+        if (lod === FAR) {
+          // A small spark rather than a glyph, so a busy epoch doesn't turn to snow.
+          const rad = Math.max(dpr, cell * 0.11 * (1 + alpha));
+          this.eachImage(x[c.node], y[c.node], (sx, sy) => {
+            ctx.beginPath();
+            ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+            ctx.fill();
+            mark(c.id, sx, sy);
+          });
+        } else {
+          ctx.font = `bold ${Math.round(cell)}px ${MONO}`;
+          this.eachImage(x[c.node], y[c.node], (sx, sy) => {
+            ctx.fillText('✶', sx, sy);
+            mark(c.id, sx, sy);
+          });
+        }
+        continue;
+      }
+      const stayed = (c.fate === 'quiet' || c.fate === 'engulfed') && c.tFate <= frame.t;
+      if (!stayed || lod === FAR) continue;
+      const [cr, cg, cb] = lineageRgb(c.id);
+      const near = lod === NEAR;
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${near ? 0.9 : 0.45})`;
+      ctx.lineWidth = near ? 1.5 * dpr : dpr;
+      const rad = near ? cell * 0.42 : cell * 0.25;
       this.eachImage(x[c.node], y[c.node], (sx, sy) => {
-        ctx.fillText(glyph, sx, sy);
-        this.civCell[Math.floor(sy / cell) * this.cols + Math.floor(sx / cell)] = c.id;
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+        ctx.stroke();
+        mark(c.id, sx, sy);
+        if (near) {
+          ctx.font = `${Math.round(10 * dpr)}px system-ui, sans-serif`;
+          ctx.fillStyle = 'rgba(200,210,230,0.75)';
+          ctx.fillText(c.name, sx, sy + rad + 8 * dpr);
+        }
       });
     }
   }
 
-  private drawLabels(ctx: CanvasRenderingContext2D, r: SimResult, labelAt: Map<number, { c: number; n: number; cells: number }>, sel: number) {
+  private drawLabels(ctx: CanvasRenderingContext2D, r: SimResult, labelAt: Map<number, { c: number; n: number; cells: number }>, sel: number, lod: number) {
     const dpr = devicePixelRatio || 1;
-    // Only territories big enough to read, largest first, at most a dozen.
-    const big = [...labelAt].filter(([, v]) => v.cells >= 25).sort((a, b) => b[1].cells - a[1].cells).slice(0, 12);
+    // Only territories big enough to read, largest first; closer in, smaller ones get names too.
+    const minCells = [25, 10, 4][lod];
+    const big = [...labelAt].filter(([, v]) => v.cells >= minCells).sort((a, b) => b[1].cells - a[1].cells).slice(0, lod === NEAR ? 24 : 12);
     ctx.font = `600 ${Math.round(12 * dpr)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

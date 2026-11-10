@@ -96,10 +96,16 @@ change that) and write a CSV to `out/`.
 The map fills the screen: a top-down tile view of a depth slice through the box, with
 lineage names on the larger territories. Panels float over it and can be hidden.
 
-- **Navigating:** drag to pan, scroll to zoom, and hover for detail.
-- **Selecting:** click a species marker (✶ first light, o stayed home) or a territory. The map then
-  shows how far the light of their first radio has travelled, their sensor range, and in orange
-  every holding they could actually see when they first looked up. Chronicle entries and the
+- **Live:** the simulation streams to the page as it runs, so playback starts at once. It can't
+  pass the simulated edge, which the timeline marks and greys beyond. The whole-run figures in
+  the Run panel appear when it finishes.
+- **Navigating:** drag to pan, scroll to zoom, and hover for detail. Detail fills in with zoom.
+  Zoomed out, territory is solid shapes with seams where lineages meet, and new species are small
+  sparks. In the middle, tiles fill out as starlight turns to waste heat. Up close, each galaxy
+  group is a disc sized by mass, ringed in its lineage's colour and filled by its waste heat.
+- **Selecting:** click a species marker (✶ first light, ○ stayed home, shown once zoomed in) or a
+  territory. The map then shows how far the light of their first radio has travelled, their
+  sensor range, and in orange every colony they could actually see when they first looked up. Chronicle entries and the
   lineage list are clickable too.
 - **Timeline:** the strip along the bottom shows the whole run. The grey area is the settled share,
   ticks along the top mark first light (white for an empty sky, orange for seeing someone), red
@@ -108,10 +114,10 @@ lineage names on the larger territories. Panels float over it and can be hidden.
   or off, and set the tile size. The box wraps, so by default the map repeats it to fill the
   screen, with dashed outlines between copies.
 - **Universe menu:** a preset, plus tick lists of kinds of civilisation and universe conditions.
-  The left panel shows which kinds hold the universe at the current moment.
-- **Progress:** a bar shows simulated time and a rough time remaining while a universe runs.
-- **Run and play:** the main button simulates once, then becomes Play/Pause for that universe.
-  It switches back to Run only after you change a setting. New seed simulates a fresh universe
+  The left panel shows the share of territory each kind has at the current moment.
+- **Run and play:** the main button starts a run and playback, then becomes Play/Pause for that
+  universe, including while it is still simulating. It switches back to Run only after you change a
+  setting, and running again replaces a run still in progress. New seed simulates a fresh universe
   with the same settings.
 - **Parameters:** start from a scenario, then edit anything. The `everything` scenario switches
   on every hazard and mechanism at once.
