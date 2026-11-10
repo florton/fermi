@@ -222,6 +222,19 @@ exact sight reaches half its shortest side; the census covers the rest. Small on
 window can dip below the 4.5 Gly floor. These convergence checks were made with the earlier
 model and a cube.
 
+**Resolution matters in the current model.** With gradual settlement, how coarse the groups
+are changes the answer a lot. Here are runs in the same box (Large's volume, 16:9), varying only
+the group count:
+
+| Groups | Galaxies per group | Observers who saw an empty sky |
+| --- | --- | --- |
+| 120k (Large) | about 8,300 | 3–4% (3 seeds) |
+| 7.5k | about 133,000 | 29–31% (3 seeds) |
+
+Vast (48 Gly, 480k groups, about 133,000 galaxies each) gave 39% on one seed, about 3 minutes
+and 1.6 GB. So treat Huge and Vast as views of scale, not as answers. Use Large, or the
+scripts' finer default, for numbers. Why coarse groups go silent hasn't been pinned down yet.
+
 ## Known limits
 
 - Beyond half the box, what observers see is a statistical estimate that treats the box as a
